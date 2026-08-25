@@ -28,6 +28,7 @@
 (require 'memex-view nil t)
 
 (declare-function memex-view-session "memex-view")
+(declare-function memex-view-session-buffer "memex-view")
 (declare-function memex-view-next-record "memex-view")
 (declare-function memex-view-previous-record "memex-view")
 (declare-function memex-view-record-at-point "memex-view")
@@ -415,6 +416,67 @@ finds it."
                          memex-view-tests--session-id))
           (should (equal (plist-get (car scope) :source-path)
                          memex-view-tests--source-path))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-session-buffer-answers-the-registry-on-the-compound-key ()
+  (unwind-protect
+      (let* ((records (memex-view-tests--records))
+             (buffer (memex-view-tests--open records
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path))
+             (other (memex-view-tests--open (memex-view-tests--records "claude")
+                                            memex-view-tests--session-id
+                                            memex-view-tests--other-source-path))
+             (impostor (generate-new-buffer "*memex view tests impostor*")))
+        (with-current-buffer impostor
+          (setq-local memex-view-session-id memex-view-tests--adopted-session-id)
+          (setq-local memex-view-source-path
+                      memex-view-tests--adopted-source-path))
+        (unwind-protect
+            (progn
+              (should (eq (memex-view-session-buffer
+                           memex-view-tests--session-id
+                           memex-view-tests--source-path)
+                          buffer))
+              (should (eq (memex-view-session-buffer
+                           memex-view-tests--session-id
+                           memex-view-tests--other-source-path)
+                          other))
+              (should-not (memex-view-session-buffer
+                           memex-view-tests--session-id
+                           "/tmp/memex-view-tests/never-opened.jsonl"))
+              (should-not (memex-view-session-buffer nil nil))
+              (should-not (memex-view-session-buffer
+                           memex-view-tests--adopted-session-id
+                           memex-view-tests--adopted-source-path)))
+          (kill-buffer impostor)))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-session-displays-through-the-function-it-was-given ()
+  (unwind-protect
+      (let* ((records (memex-view-tests--records))
+             (context (memex-view-tests--context records))
+             (given nil)
+             (displayed nil))
+        (cl-letf (((symbol-function 'memex-api-session)
+                   (lambda (_id _path callback &rest _)
+                     (funcall callback context)
+                     nil))
+                  ((symbol-function 'display-buffer)
+                   (lambda (buffer &rest _) (push buffer displayed) nil)))
+          (memex-view-session memex-view-tests--session-id
+                              memex-view-tests--source-path nil
+                              (lambda (buffer) (push buffer given)))
+          (let ((buffer (memex-view-tests--session-buffer
+                         memex-view-tests--session-id
+                         memex-view-tests--source-path)))
+            (should (buffer-live-p buffer))
+            (should (equal given (list buffer)))
+            (should (null displayed))
+            (memex-view-session memex-view-tests--session-id
+                                memex-view-tests--source-path)
+            (should (equal given (list buffer)))
+            (should (equal displayed (list buffer))))))
     (memex-view-tests--cleanup)))
 
 (provide 'memex-view-tests)

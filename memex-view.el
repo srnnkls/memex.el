@@ -200,7 +200,7 @@ that process is what `memex-cancel-rpc' takes."
   (format "*memex session %s (%s)*" session-id
           (abbreviate-file-name (or source-path ""))))
 
-(defun memex-view--buffer (session-id source-path)
+(defun memex-view-session-buffer (session-id source-path)
   "Return the live viewer buffer of SESSION-ID at SOURCE-PATH, or nil.
 The registry is derived from `buffer-list' on every open and stored
 nowhere, so it carries no entry a killed buffer could leave stale.  A nil
@@ -222,9 +222,9 @@ buffer the user is in and erase it."
 CONTEXT is the session context `memex-api-session' answers with.
 The mode is entered before the session keys are set because entering it
 kills the buffer-local values, so keys set beforehand are lost and
-`memex-view--buffer' then matches the buffer no more.  A session's source
-is read from its first record because every record of one session shares
-it."
+`memex-view-session-buffer' then matches the buffer no more.  A
+session's source is read from its first record because every record of
+one session shares it."
   (with-current-buffer buffer
     (let ((records (alist-get 'records context))
           (inhibit-read-only t))
@@ -238,18 +238,21 @@ it."
       (goto-char (point-min)))))
 
 ;;;###autoload
-(defun memex-view-session (session-id source-path &optional doc-id)
+(defun memex-view-session (session-id source-path &optional doc-id display)
   "Show the whole session SESSION-ID at SOURCE-PATH and return its process.
 The session is fetched in one request and rendered whole.  Point lands
 on the record DOC-ID, or at the start of the transcript without one.  A
-session already open is rendered into the buffer it is open in."
+session already open is rendered into the buffer it is open in.
+DISPLAY is called with the rendered buffer, defaulting to
+`display-buffer' when absent, which is how the herdr bridge puts the
+viewer up in the workspace the session is pinned to."
   (interactive
    (let ((record (memex-read-session)))
      (list (alist-get 'session_id record) (alist-get 'source_path record))))
   (memex-api-session
    session-id source-path
    (lambda (context)
-     (let ((buffer (or (memex-view--buffer session-id source-path)
+     (let ((buffer (or (memex-view-session-buffer session-id source-path)
                        (generate-new-buffer
                         (memex-view--buffer-name session-id source-path)))))
        (memex-view--render buffer context session-id source-path)
@@ -257,7 +260,7 @@ session already open is rendered into the buffer it is open in."
          (with-current-buffer buffer
            (when-let* ((position (memex-view--record-position doc-id)))
              (goto-char position))))
-       (display-buffer buffer)))))
+       (funcall (or display #'display-buffer) buffer)))))
 
 (provide 'memex-view)
 ;;; memex-view.el ends here
