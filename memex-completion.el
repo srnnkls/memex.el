@@ -80,7 +80,7 @@ from, which break a single-line candidate or annotation."
    (memex-completion--one-line (alist-get 'project record))
    (memex-completion--content record)))
 
-(defun memex-completion--annotate (candidate)
+(defun memex-completion-annotate (candidate)
   "Return the metadata rendered beside CANDIDATE.
 The tool fields are left out when the record carries no `text', because
 `memex-completion--content' has then already spent one of them on the
@@ -156,6 +156,13 @@ marginalia read a candidate's data from."
                                             index))
               records))
             records))
+
+(defun memex-completion-record-candidates (records)
+  "Return RECORDS as `memex-record' candidates, memex's ranking kept.
+The one place the convention behind a record candidate lives: the label
+a record is read under, and `doc_id' as the field the candidates are
+told apart by."
+  (memex-completion--candidates records #'memex-completion--record-base 'doc_id))
 
 (defun memex-completion--table (candidates category &optional annotate)
   "Return a completion table offering CANDIDATES under CATEGORY.
@@ -287,12 +294,11 @@ PROMPT replaces the minibuffer prompt.  RECORDS replaces the recent
 window the candidates are otherwise fetched from.  The answer is the
 record alist memex sent, the same one the chosen candidate carried in
 its `memex-record' text property."
-  (let ((candidates (memex-completion--candidates
-                     (or records (memex-completion--recent))
-                     #'memex-completion--record-base 'doc_id)))
+  (let ((candidates (memex-completion-record-candidates
+                     (or records (memex-completion--recent)))))
     (memex-completion-record-of
      (memex-completion--read (or prompt "memex record: ") candidates
-                             'memex-record #'memex-completion--annotate
+                             'memex-record #'memex-completion-annotate
                              "records"))))
 
 ;;;###autoload
@@ -308,7 +314,7 @@ and `source_path' name the session to `memex-api-session'."
                      #'memex-completion--session-base 'session_id)))
     (memex-completion-record-of
      (memex-completion--read (or prompt "memex session: ") candidates
-                             'memex-session #'memex-completion--annotate
+                             'memex-session #'memex-completion-annotate
                              "sessions"))))
 
 ;;;###autoload
