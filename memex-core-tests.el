@@ -35,12 +35,26 @@
     (delete-directory memex-core-tests--dir t))
   (setq memex-core-tests--dir nil))
 
-(defun memex-core-tests--stub (body)
-  "Write BODY as a stub memex executable and return its path."
-  (let ((path (expand-file-name "memex-stub" (memex-core-tests--tempdir))))
+(defun memex-core-tests--stub-named (name body)
+  "Write BODY as a stub memex executable called NAME and return its path."
+  (let ((path (expand-file-name name (memex-core-tests--tempdir))))
     (with-temp-file path (insert "#!/bin/sh\n" body))
     (set-file-modes path #o755)
     path))
+
+(defun memex-core-tests--stub (body)
+  "Write BODY as a stub memex executable and return its path."
+  (memex-core-tests--stub-named "memex-stub" body))
+
+(defun memex-core-tests--pong-stub (name delay version)
+  "Write stub NAME answering `ping' with VERSION after DELAY seconds."
+  (memex-core-tests--stub-named
+   name
+   (format "cat > /dev/null\nsleep %s\nprintf '%%s' %s\n"
+           delay
+           (shell-quote-argument
+            (json-serialize `((protocol . 1)
+                              (response . ((kind . "pong") (version . ,version)))))))))
 
 (defun memex-core-tests--write (name content)
   "Write CONTENT to NAME inside the test directory and return its path."
@@ -58,6 +72,18 @@
     (while (and (not (funcall predicate)) (< (float-time) deadline))
       (accept-process-output nil 0.05))
     (funcall predicate)))
+
+(defun memex-core-tests--pump (seconds)
+  "Pump process output for SECONDS without waiting on any condition."
+  (let ((deadline (+ (float-time) seconds)))
+    (while (< (float-time) deadline)
+      (accept-process-output nil 0.05))))
+
+(defun memex-core-tests--rpc-buffers ()
+  "Return how many transport buffers of `memex-rpc' are alive right now."
+  (cl-count-if (lambda (buffer)
+                 (string-prefix-p " *memex-rpc" (buffer-name buffer)))
+               (buffer-list)))
 
 (defun memex-core-tests--session-json ()
   "Return a session response large enough to reach Emacs in several chunks."
@@ -344,6 +370,110 @@
         (should-not failure)
         (should (equal (alist-get 'kind payload) "records"))
         (should (equal (memex-core-tests--read args-file) "rpc\n")))
+    (memex-core-tests--cleanup)))
+
+(ert-deftest memex-core-cancel-delivers-neither-callback-nor-errback ()
+  (unwind-protect
+      (let* ((memex-executable (memex-core-tests--pong-stub "memex-slow" "1.0" "0.11.6"))
+             (payload 'pending)
+             (failure 'pending)
+             (process (memex-rpc "ping" nil
+                                 (lambda (value) (setq payload value))
+                                 (lambda (err) (setq failure err)))))
+        (should (memex-cancel-rpc process))
+        (memex-core-tests--pump 2.5)
+        (should (eq payload 'pending))
+        (should (eq failure 'pending)))
+    (memex-core-tests--cleanup)))
+
+(ert-deftest memex-core-cancel-leaves-no-rpc-buffers-behind ()
+  (unwind-protect
+      (let ((memex-executable (memex-core-tests--pong-stub "memex-slow" "1.0" "0.11.6"))
+            (baseline (memex-core-tests--rpc-buffers)))
+        (dotimes (_ 5)
+          (let ((process (memex-rpc "ping" nil #'ignore #'ignore)))
+            (should (> (memex-core-tests--rpc-buffers) baseline))
+            (should (memex-cancel-rpc process))
+            (should (memex-core-tests--wait
+                     (lambda () (not (process-live-p process))) 5.0))))
+        (should (memex-core-tests--wait
+                 (lambda () (= (memex-core-tests--rpc-buffers) baseline)) 5.0))
+        (should (equal (memex-core-tests--rpc-buffers) baseline)))
+    (memex-core-tests--cleanup)))
+
+(ert-deftest memex-core-cancel-reports-nothing-to-the-user ()
+  (unwind-protect
+      (let* ((memex-executable (memex-core-tests--pong-stub "memex-slow" "1.0" "0.11.6"))
+             (announced nil))
+        (cl-letf (((symbol-function 'message)
+                   (lambda (format-string &rest args)
+                     (push (apply #'format-message format-string args) announced))))
+          (let ((process (memex-rpc "ping" nil #'ignore)))
+            (memex-cancel-rpc process)
+            (memex-core-tests--pump 2.5)))
+        (should (equal announced nil)))
+    (memex-core-tests--cleanup)))
+
+(ert-deftest memex-core-cancel-after-completion-is-a-no-op ()
+  (unwind-protect
+      (let* ((memex-executable (memex-core-tests--pong-stub "memex-quick" "0" "0.11.6"))
+             (payloads nil)
+             (failure nil)
+             (process (memex-rpc "ping" nil
+                                 (lambda (value) (push value payloads))
+                                 (lambda (err) (setq failure err)))))
+        (should (memex-core-tests--wait (lambda () (or failure payloads))))
+        (should-not failure)
+        (should (equal (length payloads) 1))
+        (should (equal (alist-get 'version (car payloads)) "0.11.6"))
+        (should-not (memex-cancel-rpc process))
+        (memex-core-tests--pump 0.5)
+        (should (equal (length payloads) 1))
+        (should (equal (alist-get 'version (car payloads)) "0.11.6"))
+        (should-not failure))
+    (memex-core-tests--cleanup)))
+
+(ert-deftest memex-core-cancel-leaves-a-concurrent-request-untouched ()
+  (unwind-protect
+      (let ((doomed-payload 'pending)
+            (doomed-failure 'pending)
+            (kept-payload 'pending)
+            (kept-failure nil)
+            (doomed nil))
+        (let ((memex-executable (memex-core-tests--pong-stub "memex-slow" "1.0" "doomed")))
+          (setq doomed (memex-rpc "ping" nil
+                                  (lambda (value) (setq doomed-payload value))
+                                  (lambda (err) (setq doomed-failure err)))))
+        (let ((memex-executable (memex-core-tests--pong-stub "memex-quick" "0.4" "kept")))
+          (memex-rpc "ping" nil
+                     (lambda (value) (setq kept-payload value))
+                     (lambda (err) (setq kept-failure err))))
+        (should (memex-cancel-rpc doomed))
+        (should (memex-core-tests--wait
+                 (lambda () (or kept-failure (not (eq kept-payload 'pending))))))
+        (should-not kept-failure)
+        (should (equal (alist-get 'kind kept-payload) "pong"))
+        (should (equal (alist-get 'version kept-payload) "kept"))
+        (memex-core-tests--pump 1.5)
+        (should (eq doomed-payload 'pending))
+        (should (eq doomed-failure 'pending)))
+    (memex-core-tests--cleanup)))
+
+(ert-deftest memex-core-cancel-return-value-distinguishes-live-from-finished ()
+  (unwind-protect
+      (progn
+        (should-not (memex-cancel-rpc nil))
+        (let* ((memex-executable (memex-core-tests--pong-stub "memex-slow" "1.0" "0.11.6"))
+               (process (memex-rpc "ping" nil #'ignore #'ignore)))
+          (should (memex-cancel-rpc process))
+          (should-not (memex-cancel-rpc process)))
+        (let* ((memex-executable (memex-core-tests--pong-stub "memex-quick" "0" "0.11.6"))
+               (payload 'pending)
+               (process (memex-rpc "ping" nil
+                                   (lambda (value) (setq payload value))
+                                   #'ignore)))
+          (should (memex-core-tests--wait (lambda () (not (eq payload 'pending)))))
+          (should-not (memex-cancel-rpc process))))
     (memex-core-tests--cleanup)))
 
 (ert-deftest memex-core-live-ping-answers-with-protocol-1 ()

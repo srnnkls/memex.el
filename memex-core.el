@@ -148,13 +148,25 @@ or the request does not encode."
                      (stderr-text (memex--stderr-text stderr)))
                  (kill-buffer stdout)
                  (kill-buffer stderr)
-                 (memex--dispatch-result status output stderr-text executable
-                                         callback errback)))))))
+                 (unless (process-get process 'memex-cancelled)
+                   (memex--dispatch-result status output stderr-text executable
+                                           callback errback))))))))
     (condition-case nil
         (progn (process-send-string process request)
                (process-send-eof process))
       (error nil))
     process))
+
+(defun memex-cancel-rpc (process)
+  "Delete PROCESS to abandon its request, non-nil when it was still running.
+Returns nil when PROCESS is nil or has already finished, so calling it
+twice or on a completed request is a no-op.  Neither the callback nor
+the errback of `memex-rpc' is called and nothing is reported, since a
+cancelled request has not failed."
+  (when (process-live-p process)
+    (process-put process 'memex-cancelled t)
+    (delete-process process)
+    t))
 
 (provide 'memex-core)
 ;;; memex-core.el ends here
