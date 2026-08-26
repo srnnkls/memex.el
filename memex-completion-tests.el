@@ -88,12 +88,14 @@ and that has to end in a failure rather than a hang.")
 
 (cl-defun memex-completion-tests--record (&key doc-id ts (source "codex") project
                                                session-id (role "assistant") text
-                                               tool-name tool-output source-path)
+                                               tool-name tool-output source-path
+                                               hit-count)
   "Return a record alist carrying the fields it was given.
 DOC-ID, TS, SOURCE, PROJECT, SESSION-ID, ROLE, TEXT, TOOL-NAME,
-TOOL-OUTPUT and SOURCE-PATH are the record's wire fields.  Every one
-left nil is absent from the alist, the way memex omits a `Record'
-optional rather than sending null."
+TOOL-OUTPUT and SOURCE-PATH are the record's wire fields.  HIT-COUNT is
+what a session summary carries on top of them.  Every one left nil is
+absent from the alist, the way memex omits a `Record' optional rather
+than sending null."
   (delq nil
         (list (cons 'source source)
               (cons 'doc_id doc-id)
@@ -104,7 +106,8 @@ optional rather than sending null."
               (and text (cons 'text text))
               (and tool-name (cons 'tool_name tool-name))
               (and tool-output (cons 'tool_output tool-output))
-              (and source-path (cons 'source_path source-path)))))
+              (and source-path (cons 'source_path source-path))
+              (and hit-count (cons 'hit_count hit-count)))))
 
 (defun memex-completion-tests--records-response (records)
   "Return a records payload pairing RECORDS with descending scores."
@@ -235,6 +238,31 @@ show the same string twice."
          :project "mem\nex.el" :session-id "s-noise" :role "tool_result"
          :tool-name "grep" :tool-output "matched\t3 files"
          :source-path "/tmp/noisy.jsonl")))
+
+(defconst memex-completion-tests--echoed
+  "matched line 140 of the embark tests"
+  "The one line a live tool record carries as both `text' and `tool_output'.
+memex fills a tool record's `text' from the output it is reporting, so
+the two fields agree on every one of them in the index.")
+
+(defun memex-completion-tests--live-records ()
+  "Return a tool record of the shape the index is full of, and a summary.
+The tool record's `text' and `tool_output' are the same line, which is
+the shape every tool record in the index has; the summary is what a
+grouped search stands a session up as, `hit_count' hits ending three
+days ago."
+  (let ((now (* 1000 (truncate (float-time)))))
+    (list (memex-completion-tests--record
+           :doc-id 9101 :ts (- now 90000) :source "codex"
+           :project "feat-emacs-client" :session-id "s-live" :role "tool_result"
+           :tool-name "shell" :text memex-completion-tests--echoed
+           :tool-output memex-completion-tests--echoed
+           :source-path "/tmp/live-session-9101.jsonl")
+          (memex-completion-tests--record
+           :doc-id 9102 :ts (- now (* 1000 (+ (* 3 86400) 60)))
+           :source "open-claw" :project "memex.el" :session-id "s-summary"
+           :role nil :text "the session snippet" :hit-count 42
+           :source-path "/tmp/live-session-9102.jsonl"))))
 
 (defun memex-completion-tests--read (records reader choose)
   "Run READER against a memex answering with RECORDS and return the exchange.
@@ -414,6 +442,35 @@ the record the same way this does."
         (should-not (equal (car collider) (nth 0 together))))
     (memex-completion-tests--cleanup)))
 
+(ert-deftest memex-completion-labels-carry-an-id-only-when-they-collide ()
+  "A label is its bare base until another candidate wants the same one.
+The record id is the first rung of the collision ladder and not a
+column every candidate pays: in a minibuffer those nine characters come
+out of the snippet, which is the part of the row a reader is looking at.
+Records that already read apart, and sessions that already read apart,
+carry no id at all; the six that share a base still escalate, and the
+seventh in their own batch does not, so the id is what a collision buys
+and not what a candidate is built from.
+
+`memex-completion-disambiguates-every-candidate' keeps the other half of
+the contract, that the ladder always ends in distinct labels."
+  (unwind-protect
+      (let ((distinct (memex-completion-tests--ranked-records))
+            (colliding (memex-completion-tests--colliding-records)))
+        (dolist (reader (list (lambda () (memex-read-record))
+                              (lambda () (memex-read-session))))
+          (let ((labels (memex-completion-tests--labels distinct reader)))
+            (should (equal (length labels) 3))
+            (dolist (label labels)
+              (should-not (string-match-p "#" label)))))
+        (let ((labels (memex-completion-tests--labels
+                       colliding (lambda () (memex-read-record)))))
+          (should (equal (length labels) 7))
+          (dotimes (index 6)
+            (should (string-match-p "#" (nth index labels))))
+          (should-not (string-match-p "#" (nth 6 labels)))))
+    (memex-completion-tests--cleanup)))
+
 (ert-deftest memex-completion-sessions-deduplicate-by-id-and-source-path ()
   (unwind-protect
       (let* ((exchange (memex-completion-tests--read
@@ -467,10 +524,44 @@ the record the same way this does."
         (should (string-match-p "matched 3 files" (nth 2 labels)))
         (should-not (string-match-p "matched 3 files" tooled))
         (should-not (string-match-p "grep" tooled))
-        (should (string-match-p "/tmp/noisy\\.jsonl" tooled))
+        (should-not (string-match-p "/tmp/noisy\\.jsonl" tooled))
         (should (string-match-p "sh ell" noisy))
         (dolist (label labels)
           (should-not (string-match-p "[\n\r\t]" label))))
+    (memex-completion-tests--cleanup)))
+
+(ert-deftest memex-completion-annotation-adds-to-the-label-instead-of-echoing-it ()
+  "An annotation carries what the label does not and nothing it already has.
+A tool record's `text' is the output it reports, so an annotation that
+prints the tool fields whenever there is `text' prints the label's own
+content back a second time and then a session path nobody reads.  What
+is left worth showing is the source, how long ago the session was
+touched, and, for a session summary, how many hits it stands for."
+  (unwind-protect
+      (let* ((exchange (memex-completion-tests--read
+                        (memex-completion-tests--live-records)
+                        (lambda () (memex-read-record))
+                        #'car))
+             (candidates (plist-get exchange :candidates))
+             (metadata (memex-completion-tests--metadata
+                        (plist-get exchange :table)))
+             (labels (memex-completion-tests--plain candidates))
+             (tooled (memex-completion-tests--annotation
+                      metadata (nth 0 candidates)))
+             (summary (memex-completion-tests--annotation
+                       metadata (nth 1 candidates))))
+        (should (equal (length candidates) 2))
+        (should (string-match-p (regexp-quote memex-completion-tests--echoed)
+                                (nth 0 labels)))
+        (should-not (string-match-p (regexp-quote memex-completion-tests--echoed)
+                                    tooled))
+        (should-not (string-match-p "live-session-9101" tooled))
+        (should-not (string-match-p "[0-9]\\{4\\}-[0-9]\\{2\\}-[0-9]\\{2\\}" tooled))
+        (should (string-match-p "codex" tooled))
+        (should-not (string-match-p "the session snippet" summary))
+        (should-not (string-match-p "live-session-9102" summary))
+        (should (string-match-p "42" summary))
+        (should (string-match-p "\\b3d\\b" summary)))
     (memex-completion-tests--cleanup)))
 
 (ert-deftest memex-completion-propagates-the-fetch-failure ()

@@ -61,6 +61,22 @@ from, which break a single-line candidate or annotation."
   (when (numberp milliseconds)
     (format-time-string "%F %R" (/ milliseconds 1000))))
 
+(defun memex-completion--age (milliseconds)
+  "Return how long ago the epoch MILLISECONDS was, or nil without one.
+The coarsest unit that still counts is the one shown, since a candidate
+line is read for how stale a record is and not for when it was written."
+  (when (numberp milliseconds)
+    (let ((seconds (max 0 (floor (- (float-time) (/ milliseconds 1000.0))))))
+      (cond ((< seconds 60) (format "%ds" seconds))
+            ((< seconds 3600) (format "%dm" (/ seconds 60)))
+            ((< seconds 86400) (format "%dh" (/ seconds 3600)))
+            (t (format "%dd" (/ seconds 86400)))))))
+
+(defun memex-completion--hits (count)
+  "Return COUNT as the hits a session summary stands for, or nil without one."
+  (when (numberp count)
+    (format (ngettext "%d hit" "%d hits" count) count)))
+
 (defun memex-completion--content (record)
   "Return the text, tool output or tool name of RECORD as one line."
   (or (memex-completion--one-line (alist-get 'text record))
@@ -80,20 +96,42 @@ from, which break a single-line candidate or annotation."
    (memex-completion--one-line (alist-get 'project record))
    (memex-completion--content record)))
 
-(defun memex-completion-annotate (candidate)
-  "Return the metadata rendered beside CANDIDATE.
-The tool fields are left out when the record carries no `text', because
+(defun memex-completion--label-source (record)
+  "Return the one line RECORD's label was cut from.
+A search summary overwrites `text' with a window into the text the
+label was cut from, so by the time the record is annotated that text is
+no longer among its fields; `memex-label-source' is what carries it
+across.  A record without one was labelled as it stands."
+  (or (memex-completion--one-line (alist-get 'memex-label-source record))
+      (memex-completion--content record)))
+
+(defun memex-completion--beside (record field)
+  "Return FIELD of RECORD as one line, or nil when the label came from it.
+A tool record's `text' is the output it is reporting, so the field the
+label was built from and the field beside it are the same string on most
+of the index.  Sameness is decided against the field the label was cut
+from and not against the label, which on a session row is a window into
+that field and shares none of its content.  The tool fields are left out
+altogether when the record carries no `text', because
 `memex-completion--content' has then already spent one of them on the
 label."
-  (let* ((record (memex-completion-record-of candidate))
-         (text (memex-completion--one-line (alist-get 'text record))))
+  (and (alist-get 'text record)
+       (let ((line (memex-completion--one-line (alist-get field record))))
+         (unless (equal line (memex-completion--label-source record)) line))))
+
+(defun memex-completion-annotate (candidate)
+  "Return the metadata rendered beside CANDIDATE.
+What the label does not already carry: how many hits a session summary
+stands for, how long ago the record was written, where it came from and
+the tool fields the label was not built from."
+  (let ((record (memex-completion-record-of candidate)))
     (concat "  "
             (memex-completion--join
-             (memex-completion--time (alist-get 'ts record))
+             (memex-completion--hits (alist-get 'hit_count record))
+             (memex-completion--age (alist-get 'ts record))
              (memex-completion--one-line (alist-get 'source record))
-             (and text (memex-completion--one-line (alist-get 'tool_name record)))
-             (and text (memex-completion--one-line (alist-get 'tool_output record)))
-             (memex-completion--one-line (alist-get 'source_path record))))))
+             (memex-completion--beside record 'tool_name)
+             (memex-completion--beside record 'tool_output)))))
 
 (defun memex-completion--short-id (id)
   "Return the tail of ID standing for it in a candidate label."
@@ -122,11 +160,15 @@ name of PATH and finally INDEX, which no two candidates share."
   "Return one distinct label per candidate.
 BASES and SUFFIXES run in parallel, each entry of SUFFIXES what its
 candidate appends in turn.  A label follows from the whole candidate
-set rather than from the order the set was built in."
+set rather than from the order the set was built in: it is its bare
+base until another candidate wants the same one, and only then climbs
+the suffixes, whose last rung no two candidates share."
   (let* ((ladders (seq-mapn (lambda (base entry)
-                              (mapcar (lambda (suffix)
-                                        (memex-completion--join base suffix))
-                                      entry))
+                              (cons base
+                                    (mapcar (lambda (suffix)
+                                              (memex-completion--join base
+                                                                      suffix))
+                                            entry)))
                             bases suffixes))
          (labels (mapcar #'car ladders))
          (depth (if ladders (seq-max (mapcar #'length ladders)) 0))
@@ -163,6 +205,14 @@ The one place the convention behind a record candidate lives: the label
 a record is read under, and `doc_id' as the field the candidates are
 told apart by."
   (memex-completion--candidates records #'memex-completion--record-base 'doc_id))
+
+(defun memex-completion-session-candidates (records)
+  "Return RECORDS as `memex-session' candidates, memex's ranking kept.
+Each of RECORDS stands for the session it belongs to: the label leaves
+out the role a lone record is told apart by, and `session_id' is the
+field the candidates are told apart by."
+  (memex-completion--candidates records #'memex-completion--session-base
+                                'session_id))
 
 (defun memex-completion--table (candidates category &optional annotate)
   "Return a completion table offering CANDIDATES under CATEGORY.
@@ -308,10 +358,9 @@ PROMPT replaces the minibuffer prompt.  RECORDS replaces the recent
 window the sessions are otherwise gathered from, and is grouped the same
 way.  The answer is the newest record of the session, whose `session_id'
 and `source_path' name the session to `memex-api-session'."
-  (let ((candidates (memex-completion--candidates
+  (let ((candidates (memex-completion-session-candidates
                      (memex-completion--sessions
-                      (or records (memex-completion--recent)))
-                     #'memex-completion--session-base 'session_id)))
+                      (or records (memex-completion--recent))))))
     (memex-completion-record-of
      (memex-completion--read (or prompt "memex session: ") candidates
                              'memex-session #'memex-completion-annotate

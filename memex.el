@@ -21,15 +21,19 @@
 ;; This package speaks that command and puts the index up in the
 ;; minibuffer and in Emacs buffers.
 ;;
-;;   M-x memex-search        search the index and return the record chosen
+;;   M-x memex-search        search the index and open what was chosen
 ;;   M-x memex-view-session  read a session's transcript in a buffer
 ;;   M-x memex-usage         report memex's token usage
 ;;
-;; `memex-search' reads a record out of memex's index.  With consult
-;; installed it searches as you type: each input change supersedes the
-;; request in flight and the matches of the one that is still current are
-;; published into consult's sink.  Without consult it reads one query,
-;; fetches once and puts the matches up through `memex-read-record'.
+;; `memex-search' answers with one candidate per session, the way memex's
+;; own UIs do, and opens the session it was pointed at while still
+;; returning the record for a caller that wants one;
+;; `memex-search-group-by-session' nil answers with one per record.  With
+;; consult installed it searches as you type: each input change
+;; supersedes the request in flight and the matches of the one that is
+;; still current are published into consult's sink.  Without consult it
+;; reads one query, fetches once and puts the matches up through the
+;; matching selector.
 ;;
 ;; Consult is a soft requirement.  It is required at call time, never at
 ;; load time, so the package loads and works without it.
@@ -53,6 +57,8 @@
 (declare-function consult--async-min-input "consult" (&optional min-input))
 (declare-function consult--async-throttle "consult" (&optional throttle debounce))
 (declare-function consult--lookup-member "consult" (selected candidates &rest _))
+(declare-function memex-herdr-open-session "memex-herdr"
+                  (session-id source-path &optional doc-id))
 
 (defconst memex-search-modes '(lexical semantic hybrid)
   "The search modes memex offers, in the order they are cycled through.")
@@ -64,6 +70,26 @@ modes keep: semantic mode embeds every debounced input, so it is worth
 waiting longer for the typing to settle than a lexical round trip is."
   :type 'number
   :group 'memex)
+
+(defcustom memex-search-group-by-session t
+  "Whether a search answers with one candidate per session.
+Four fifths of the index is tool traffic, so a record-level answer is
+four fifths rows of it and a page of matches is a handful of sessions;
+this is what memex's own UIs list, which never put a record up.  Nil
+answers with one candidate per record."
+  :type 'boolean
+  :group 'memex)
+
+(defcustom memex-search-snippet-width 160
+  "Characters of the best-scoring hit a session candidate is read under.
+memex summarizes a session's snippet to the same width."
+  :type 'natnum
+  :group 'memex)
+
+(defconst memex-search--limit 20
+  "Matches a record-level search asks memex for.
+`memex-api-search's own default, named here because a grouped search
+over-fetches against it.")
 
 (defvar memex-search--consult-noted nil
   "Non-nil once the notice that consult unlocks live search was shown.")
@@ -83,11 +109,132 @@ waiting longer for the typing to settle than a lexical round trip is."
   "Return the input debounce MODE queries under, nil for consult's own."
   (and (eq mode 'semantic) memex-search-debounce))
 
-(defun memex-search--candidates (hits)
+(defun memex-search--candidate-limit ()
+  "Return the number of matches to ask memex for.
+Grouping over-fetches the way memex's own CLI does before it
+post-filters: a limit spent on one session's tool traffic comes back as
+a page of one session."
+  (if memex-search-group-by-session
+      (max (* memex-search--limit 5) (+ memex-search--limit 10))
+    memex-search--limit))
+
+(defun memex-search--match (line query)
+  "Return the earliest of QUERY's terms in LINE as a (START . LENGTH) pair.
+A term is matched literally and without regard to case, and the earliest
+match of any term wins: the passage worth reading a hit under is not the
+one the term the query leads with happens to name.  Nil when no term
+occurs in LINE at all, which is what a semantic or a hybrid hit answers
+with."
+  (let ((case-fold-search t)
+        (earliest nil))
+    (dolist (term (split-string (or query "")) earliest)
+      (when-let* ((at (string-match (regexp-quote term) line)))
+        (when (or (null earliest) (< at (car earliest)))
+          (setq earliest (cons at (length term))))))))
+
+(defun memex-search--window (line start length width)
+  "Return WIDTH characters of LINE around the match at START of LENGTH.
+The match sits in the middle of the window, or as near the middle as an
+end of LINE leaves room for, and an edge the window cuts carries the
+same ellipsis the head of the text ends under.  The ellipses are part of
+the width, so the window is WIDTH characters however it was cut."
+  (let* ((span (- width 6))
+         (from (max 0 (- start (max 0 (/ (- span length) 2))))))
+    (cond ((zerop from) (concat (substring line 0 (- width 3)) "..."))
+          ((>= (+ from span) (length line))
+           (concat "..." (substring line (- (length line) (- width 3)))))
+          (t (concat "..." (substring line from (+ from span)) "...")))))
+
+(defun memex-search--summarize (text query)
+  "Return TEXT as the snippet of at most `memex-search-snippet-width'.
+memex's own summary of the whitespace: runs of it collapse to a single
+space and a leading run is dropped.  A text longer than the width is cut
+to a window around where QUERY first matches it, the way memex's own
+`matches' reports a hit with context on either side of it, since every
+`codex exec' record opens with the same line of shell boilerplate and a
+snippet taken from character zero reads alike for unrelated hits.  A
+text no term matches keeps its first width-less-three characters under
+an ellipsis."
+  (let* ((line (string-trim
+                (replace-regexp-in-string "[[:cntrl:][:blank:]]+" " "
+                                          (or text ""))))
+         (width memex-search-snippet-width)
+         (match (and (> width 6) (memex-search--match line query))))
+    (cond ((<= (length line) width) line)
+          ((< width 3) (string-trim (substring line 0 width)))
+          (match (memex-search--window line (car match) (cdr match) width))
+          (t (string-trim (concat (substring line 0 (- width 3)) "..."))))))
+
+(defun memex-search--group (hits)
+  "Return the (SCORE RECORD) pairs of HITS bucketed by session.
+A session is a `session_id' at a `source_path' - the same id under two
+paths is two conversations, which is the pair memex's own server filters
+a session's records by - and the buckets keep the order their first hit
+arrived in, so memex's ranking survives the grouping."
+  (let ((buckets (make-hash-table :test #'equal))
+        (order nil))
+    (dolist (hit hits)
+      (let* ((record (cadr hit))
+             (key (cons (alist-get 'session_id record)
+                        (alist-get 'source_path record))))
+        (unless (gethash key buckets) (push key order))
+        (puthash key (cons hit (gethash key buckets)) buckets)))
+    (mapcar (lambda (key) (nreverse (gethash key buckets))) (nreverse order))))
+
+(defun memex-search--summary (hits query)
+  "Return the HITS of one session as the record standing for it.
+What memex's own `SessionSummary' keeps: every hit is counted, the
+newest `ts' among them is the session's, and the snippet, the path and
+the record the session opens at come from the best-scoring hit, a tie
+going to the later of the two.  QUERY is what that hit's snippet is
+read around.
+
+The text the snippet was cut from stays on the summary under
+`memex-label-source', because the snippet replaces it: a tool record's
+`text' is the output it reports, and an annotation that no longer knows
+which field its label came from prints that output back beside it."
+  (let ((top (car hits))
+        (ts 0))
+    (dolist (hit hits)
+      (setq ts (max ts (or (alist-get 'ts (cadr hit)) 0)))
+      (when (>= (car hit) (car top)) (setq top hit)))
+    (let ((record (copy-alist (cadr top)))
+          (text (alist-get 'text (cadr top))))
+      (setf (alist-get 'ts record) ts
+            (alist-get 'hit_count record) (length hits)
+            (alist-get 'memex-label-source record)
+            (memex-completion--one-line text)
+            (alist-get 'text record) (memex-search--summarize text query))
+      record)))
+
+(defun memex-search--summaries (hits query)
+  "Return the HITS of a QUERY as one summary record per session."
+  (mapcar (lambda (group) (memex-search--summary group query))
+          (memex-search--group hits)))
+
+(defun memex-search--candidates (hits query)
   "Return the (SCORE RECORD) pairs of HITS as completion candidates.
 Memex's score order is kept and each candidate carries its record, the
-way the recent-window selectors build theirs."
-  (memex-completion-record-candidates (mapcar #'cadr hits)))
+way the recent-window selectors build theirs.  Grouped, one candidate
+stands for a session and carries the summary of its hits, read around
+QUERY."
+  (if memex-search-group-by-session
+      (memex-completion-session-candidates
+       (memex-search--summaries hits query))
+    (memex-completion-record-candidates (mapcar #'cadr hits))))
+
+(defun memex-search--open (record)
+  "Open the session RECORD belongs to at RECORD, and return RECORD.
+The herdr bridge takes it when that is loaded and the viewer takes it
+when it is not, which is the fork `memex-org-follow' takes."
+  (when record
+    (funcall (if (fboundp 'memex-herdr-open-session)
+                 #'memex-herdr-open-session
+               #'memex-view-session)
+             (alist-get 'session_id record)
+             (alist-get 'source_path record)
+             (alist-get 'doc_id record)))
+  record)
 
 (defun memex-search--async (mode)
   "Return the consult async function searching memex in MODE.
@@ -134,7 +281,8 @@ reporting the kill as a transport failure on every keystroke."
                         (when (= current generation)
                           (funcall sink 'flush)
                           (when-let* ((candidates
-                                       (memex-search--candidates hits)))
+                                       (memex-search--candidates hits
+                                                                 action)))
                             (funcall sink candidates))
                           (funcall sink 'refresh)))
                       :errback
@@ -145,7 +293,7 @@ reporting the kill as a transport failure on every keystroke."
                           (message "memex search: %s"
                                    (or (plist-get (cdr failure) :message)
                                        (error-message-string failure)))))
-                      :mode mode))))))))))
+                      :mode mode :limit (memex-search--candidate-limit)))))))))))
 
 (defun memex-search--next-mode (mode)
   "Return the mode following MODE in `memex-search-modes'."
@@ -167,34 +315,39 @@ an unchanged input string: a mode switched in place would never re-query."
 (defun memex-search--consult (mode initial)
   "Search memex in MODE from INITIAL as it is typed, and return the record."
   (let ((memex-search--mode mode))
-    (memex-completion-record-of
-     (consult--read (consult--async-pipeline
-                     (consult--async-min-input)
-                     (consult--async-throttle nil (memex-search--debounce mode))
-                     (memex-search--async mode))
-                    :prompt (memex-search--prompt mode)
-                    :initial initial
-                    :category 'memex-record
-                    :annotate #'memex-completion-annotate
-                    :lookup #'consult--lookup-member
-                    :keymap memex-search-map
-                    :require-match t
-                    :sort nil))))
+    (memex-search--open
+     (memex-completion-record-of
+      (consult--read (consult--async-pipeline
+                      (consult--async-min-input)
+                      (consult--async-throttle nil (memex-search--debounce mode))
+                      (memex-search--async mode))
+                     :prompt (memex-search--prompt mode)
+                     :initial initial
+                     :category 'memex-record
+                     :annotate #'memex-completion-annotate
+                     :lookup #'consult--lookup-member
+                     :keymap memex-search-map
+                     :require-match t
+                     :sort nil)))))
 
 (defun memex-search--fetch (query mode)
-  "Return the records memex answers QUERY with in MODE."
-  (mapcar #'cadr
-          (memex-completion--fetch
-           (lambda (callback errback)
-             (memex-api-search query callback :errback errback :mode mode)))))
+  "Return the records memex answers QUERY with in MODE.
+Grouped, the answer is one summary record per session."
+  (let ((hits (memex-completion--fetch
+               (lambda (callback errback)
+                 (memex-api-search query callback :errback errback :mode mode
+                                   :limit (memex-search--candidate-limit))))))
+    (if memex-search-group-by-session
+        (memex-search--summaries hits query)
+      (mapcar #'cadr hits))))
 
 (defun memex-search--static (mode initial)
   "Read a query in MODE starting from INITIAL and return the record chosen.
 One query, one fetch: without consult there is nothing that could
 refresh the candidates while the query is typed.  The matches are handed
-to `memex-read-record' rather than left to it, and a query nothing
-matched is refused, since an empty record list is nil and would fall
-through to the recent window."
+to the selector rather than left to it, and a query nothing matched is
+refused, since an empty record list is nil and would fall through to the
+recent window."
   (unless memex-search--consult-noted
     (setq memex-search--consult-noted t)
     (message "memex: install consult to search as you type"))
@@ -202,18 +355,24 @@ through to the recent window."
          (records (memex-search--fetch query mode)))
     (unless records
       (user-error "No memex records match %s" query))
-    (memex-read-record nil records)))
+    (memex-search--open
+     (if memex-search-group-by-session
+         (memex-read-session nil records)
+       (memex-read-record nil records)))))
 
 ;;;###autoload
 (defun memex-search (&optional mode initial)
-  "Search memex for a record and return the one chosen.
+  "Search memex, open what was chosen and return its record.
 MODE is `lexical', `semantic' or `hybrid', defaulting to `lexical' and
 read from the minibuffer with a prefix argument.  INITIAL is the query
 the session starts from, which is what \\[memex-search-cycle-mode]
 carries across a mode switch.
 
-The search runs as the query is typed when consult is installed, and
-falls back to one query read into a static picker when it is not."
+The matches go up one candidate per session unless
+`memex-search-group-by-session' is nil, and the session chosen opens at
+the record it was matched on.  The search runs as the query is typed
+when consult is installed, and falls back to one query read into a
+static picker when it is not."
   (interactive
    (list (and current-prefix-arg
               (intern (completing-read "memex search mode: "
