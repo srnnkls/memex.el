@@ -63,6 +63,12 @@ An entry is (ensure), (shell PROGRAM . ARGUMENTS), (tab-create . KEYS),
 (defvar memex-herdr-tests--unreachable nil
   "When non-nil, no herdr server answers for the duration of a run.")
 
+(defvar memex-herdr-tests--installed "/usr/bin/memex"
+  "Where `executable-find' answers `memex-executable' is, nil for nowhere.
+Whether the machine running the suite has memex installed is not a fact
+any of these tests is about, so the probe is answered from here rather
+than from the filesystem.")
+
 (defun memex-herdr-tests--json (value)
   "Return VALUE as JSON text: a string quoted, nil as null."
   (if value (format "%S" value) "null"))
@@ -99,6 +105,11 @@ defaults to \"codex\"."
         (insert json)))
     0))
 
+(defun memex-herdr-tests--which ()
+  "Return an `executable-find' replacement answering from this file alone."
+  (lambda (command &rest _)
+    (and (equal command memex-executable) memex-herdr-tests--installed)))
+
 (defmacro memex-herdr-tests--letf (symbols bindings &rest body)
   "Run BODY under BINDINGS, leaving SYMBOLS unbound afterwards.
 `cl-letf' restores a function cell it found void to nil rather than to
@@ -121,6 +132,7 @@ A non-nil `memex-herdr-tests--unreachable' makes the readiness step signal
                                         herdr-api-pane-send-text)
          (((symbol-function 'call-process) (memex-herdr-tests--shell ,json))
           ((symbol-function 'process-file) (memex-herdr-tests--shell ,json))
+          ((symbol-function 'executable-find) (memex-herdr-tests--which))
           ((symbol-function 'herdr-start-server-if-needed)
                 (lambda ()
                   (push (list 'ensure) memex-herdr-tests--calls)
@@ -209,6 +221,11 @@ SOURCE defaults to \"codex\"."
       (delete-file path))))
 
 (ert-deftest memex-herdr-resume-readies-herdr-then-opens-the-tab-and-sends-the-command ()
+  "The ordering that carries a guarantee is `ensure' before `tab-create':
+a tab must never be created against a server that was never readied.
+`ensure' before `shell' guarantees nothing - the memex lookup has no
+relationship to herdr - and requiring it is what would force herdr to be
+probed for on the three branches that never touch it."
   (let* ((path (memex-herdr-tests--transcript))
          (record (memex-herdr-tests--record path)))
     (unwind-protect
@@ -221,7 +238,7 @@ SOURCE defaults to \"codex\"."
           (let ((log (seq-remove (lambda (call) (eq (car call) 'view))
                                  (reverse memex-herdr-tests--calls))))
             (should (equal (mapcar #'car log)
-                           '(ensure shell tab-create send-text)))
+                           '(shell ensure tab-create send-text)))
             (let ((keys (cdr (nth 2 log))))
               (should (equal (plist-get keys :cwd)
                              "/tmp/memex-herdr-tests/proj"))
@@ -354,6 +371,7 @@ SOURCE defaults to \"codex\"."
                      (memex-herdr-tests--row memex-herdr-tests--session-id path
                                              "/tmp/memex-herdr-tests/proj" nil
                                              "codex resume 7f"))))
+                  ((symbol-function 'executable-find) (memex-herdr-tests--which))
                   ((symbol-function 'memex-view-session)
                    (lambda (session-id source-path &optional doc-id display)
                      (push (list 'view session-id source-path doc-id display)

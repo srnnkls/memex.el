@@ -71,7 +71,18 @@ to where the `+ws-pin' helpers are installed, and in whatever window
   (memex-view-session session-id source-path doc-id #'memex-herdr--display))
 
 (defun memex-herdr--ready ()
-  "Ready a herdr server, refusing when there is none to ready."
+  "Ready the session lookup, refusing without `memex-executable' on PATH.
+The lookup shells it out, so a resume without it on PATH comes back with
+no row and reads as a session out of the lookup window; refusing here is
+what keeps the two apart."
+  (unless (executable-find memex-executable)
+    (user-error "Memex executable not found: %s" memex-executable)))
+
+(defun memex-herdr--ready-server ()
+  "Ready the herdr server a tab is about to be created against.
+Only a resume that reaches an agent needs herdr; the branches that end in
+the viewer are answered on a machine that has none, so the probe belongs
+here rather than at the head of a resume."
   (unless (fboundp 'herdr-start-server-if-needed)
     (user-error "Herdr is not installed: no herdr-start-server-if-needed"))
   (condition-case failure (herdr-start-server-if-needed)
@@ -82,8 +93,8 @@ to where the `+ws-pin' helpers are installed, and in whatever window
   "Return what memex knows of the session SESSION-ID at SOURCE-PATH.
 The window of recent SOURCE sessions is read in one shell-out and
 matched here on the two fields together.  A shell-out that cannot run at
-all - no `memex-executable' to run, or no SOURCE to ask about - answers
-with no rows, which the caller reports as the session it could not find."
+all - no SOURCE to ask about - answers with no rows, which the caller
+reports as the session it could not find."
   (let ((rows (condition-case nil
                   (with-temp-buffer
                     (let ((default-directory temporary-file-directory))
@@ -154,7 +165,8 @@ answer with differs and none of it is meant to be read."
           (message "memex resume: no %s resume command for this session, showing the transcript"
                    source)
           (memex-herdr-open-session session-id source-path doc-id))
-         (t (memex-herdr--start row command)))))))
+         (t (memex-herdr--ready-server)
+            (memex-herdr--start row command)))))))
 
 (provide 'memex-herdr)
 ;;; memex-herdr.el ends here
