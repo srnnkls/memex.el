@@ -29,8 +29,8 @@
 ;; open of that session would render the whole transcript over it.
 ;;
 ;; Neither embark nor marginalia is required.  `memex-embark-setup' is
-;; reached from the autoload file when embark loads, and asks marginalia
-;; for nothing when marginalia is absent.
+;; reached when embark loads, and asks marginalia for nothing when
+;; marginalia is absent.
 
 ;;; Code:
 
@@ -155,6 +155,8 @@ idempotent for the user whose marginalia was already up."
     (memex-embark--annotate))
   (with-eval-after-load 'marginalia
     (memex-embark--annotate)))
+
+(with-eval-after-load 'embark (memex-embark-setup))
 
 ;;;###autoload (with-eval-after-load 'embark (memex-embark-setup))
 
