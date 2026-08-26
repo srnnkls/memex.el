@@ -21,7 +21,17 @@
 (require 'memex-api)
 (require 'memex-view)
 
-(ignore-errors (require 'memex-evil nil t))
+(defconst memex-evil-tests--pulled-in-herdr
+  (let ((before (featurep 'memex-herdr)))
+    (ignore-errors (require 'memex-evil nil t))
+    (if before 'unmeasurable (featurep 'memex-herdr)))
+  "Whether loading memex-evil is what brought the herdr bridge in.
+Measured around the load, because by the time a test body runs the
+feature list has absorbed every other suite's requires and says nothing
+about who pulled what.  A bridge already loaded when this file is read
+leaves nothing to measure, and yields `unmeasurable' rather than the nil
+a clean load answers with: the assertion demands the measurement, so a
+require order that retires it fails instead of passing quietly.")
 
 (declare-function memex-evil-setup "memex-evil")
 (declare-function memex-view-next-record "memex-view")
@@ -87,13 +97,12 @@ Each element is (KEY-DESCRIPTION KEYMAP . DEFINITION)."
   "memex-evil.el loads with no evil installed and leaves the viewer working.
 It pulls in neither evil nor the herdr bridge, and the viewer's own
 keymap keeps the plain bindings `memex-view' put there - the major mode
-stays evil-agnostic.  The herdr assertion also keeps the resume test's
-own `require' from reaching this one: ERT runs the batch alphabetically,
-so this test sorts first, and if that ever stops holding the assertion
-fails loudly instead of quietly passing on a pre-loaded feature."
+stays evil-agnostic.  The herdr assertion reads the delta recorded
+around the file-level load, because memex-tests.el loads every suite
+into one Emacs and memex-herdr-tests.el brings the bridge in."
   (should (eq (require 'memex-evil nil t) 'memex-evil))
+  (should (eq memex-evil-tests--pulled-in-herdr nil))
   (should (fboundp 'memex-evil-setup))
-  (should-not (featurep 'memex-herdr))
   (unless (locate-library "evil")
     (should-not (featurep 'evil)))
   (let ((buffer (generate-new-buffer " *memex-evil-tests*")))

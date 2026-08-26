@@ -16,8 +16,10 @@
 ;;; Commentary:
 
 ;; Memex indexes the conversation history of coding agents and answers
-;; queries over it through a JSON-RPC command.  This package speaks that
-;; command and puts the index up in the minibuffer and in Emacs buffers.
+;; queries over it through its `rpc' command, whose wire is a protocol-1
+;; envelope - {"protocol":1,"request":{"op":...}} - and not JSON-RPC.
+;; This package speaks that command and puts the index up in the
+;; minibuffer and in Emacs buffers.
 ;;
 ;;   M-x memex-search        search the index and return the record chosen
 ;;   M-x memex-view-session  read a session's transcript in a buffer

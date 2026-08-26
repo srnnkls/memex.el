@@ -32,6 +32,14 @@
 
 (defvar memex-completion-tests--dir nil)
 
+(defconst memex-completion-tests--timeout 300.0
+  "Deadline the selector tests give a stub, in seconds.
+`memex-completion-timeout' is an absolute wall clock, and how long a
+fetch took is not the subject of any test here: a 120-second bound
+expired under a load average of 140.  It stays finite because a stub
+that never answers is a transport regression these same tests cover,
+and that has to end in a failure rather than a hang.")
+
 (defun memex-completion-tests--tempdir ()
   "Return this test's temporary directory, creating it once."
   (or memex-completion-tests--dir
@@ -244,6 +252,7 @@ uniqueness is for."
   (let ((memex-executable
          (memex-completion-tests--recording-stub
           (memex-completion-tests--records-response records)))
+        (memex-completion-timeout memex-completion-tests--timeout)
         (table nil)
         (candidates nil))
     (cl-letf (((symbol-function 'read-string)
@@ -466,28 +475,31 @@ the record the same way this does."
 
 (ert-deftest memex-completion-propagates-the-fetch-failure ()
   (unwind-protect
-      (cl-letf (((symbol-function 'completing-read)
-                 (lambda (&rest _)
-                   (error "A failed fetch must not open a picker"))))
-        (let* ((memex-executable
-                (memex-completion-tests--stub
-                 (format "cat > /dev/null\nprintf '%%s' %s\n"
-                         (shell-quote-argument
-                          (concat "{\"protocol\":1,\"response\":"
-                                  "{\"kind\":\"error\","
-                                  "\"message\":\"no session caea32e0\"}}")))))
-               (failure (should-error (memex-read-record) :type 'memex-rpc-error)))
-          (should (equal (plist-get (cdr failure) :message) "no session caea32e0")))
-        (let* ((memex-executable
-                (memex-completion-tests--stub
-                 (concat "cat > /dev/null\n"
-                         "printf '%s\\n' 'Error: missing field `query`' >&2\n"
-                         "exit 1\n")))
-               (failure (should-error (memex-read-session)
-                                      :type 'memex-transport-error)))
-          (should (equal (plist-get (cdr failure) :exit-status) 1))
-          (should (equal (plist-get (cdr failure) :stderr)
-                         "Error: missing field `query`\n"))))
+      (let ((memex-completion-timeout memex-completion-tests--timeout))
+        (cl-letf (((symbol-function 'completing-read)
+                   (lambda (&rest _)
+                     (error "A failed fetch must not open a picker"))))
+          (let* ((memex-executable
+                  (memex-completion-tests--stub
+                   (format "cat > /dev/null\nprintf '%%s' %s\n"
+                           (shell-quote-argument
+                            (concat "{\"protocol\":1,\"response\":"
+                                    "{\"kind\":\"error\","
+                                    "\"message\":\"no session caea32e0\"}}")))))
+                 (failure (should-error (memex-read-record)
+                                        :type 'memex-rpc-error)))
+            (should (equal (plist-get (cdr failure) :message)
+                           "no session caea32e0")))
+          (let* ((memex-executable
+                  (memex-completion-tests--stub
+                   (concat "cat > /dev/null\n"
+                           "printf '%s\\n' 'Error: missing field `query`' >&2\n"
+                           "exit 1\n")))
+                 (failure (should-error (memex-read-session)
+                                        :type 'memex-transport-error)))
+            (should (equal (plist-get (cdr failure) :exit-status) 1))
+            (should (equal (plist-get (cdr failure) :stderr)
+                           "Error: missing field `query`\n")))))
     (memex-completion-tests--cleanup)))
 
 (provide 'memex-completion-tests)

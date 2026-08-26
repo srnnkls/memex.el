@@ -66,11 +66,28 @@
   "Return the contents of PATH."
   (with-temp-buffer (insert-file-contents path) (buffer-string)))
 
+(defun memex-core-tests--running-p ()
+  "Return non-nil while a memex process of this run is still alive."
+  (cl-some (lambda (process)
+             (and (process-live-p process)
+                  (string-match-p "memex" (process-name process))))
+           (process-list)))
+
 (defun memex-core-tests--wait (predicate &optional timeout)
-  "Pump process output until PREDICATE is non-nil or TIMEOUT elapses."
-  (let ((deadline (+ (float-time) (or timeout 10.0))))
+  "Pump process output until PREDICATE is non-nil or TIMEOUT elapses.
+TIMEOUT bounds the wait for a memex that has already exited: a stub
+still running pushes the deadline back, so a loaded machine that merely
+delays every stub does not fail a test about something else.  The
+extension is clamped to a ceiling far above any stub's runtime, because
+every stub here blocks on EOF and a transport that stops sending one
+would otherwise never release the wait."
+  (let* ((bound (or timeout 10.0))
+         (ceiling (+ (float-time) (* 30 bound)))
+         (deadline (min ceiling (+ (float-time) bound))))
     (while (and (not (funcall predicate)) (< (float-time) deadline))
-      (accept-process-output nil 0.05))
+      (accept-process-output nil 0.05)
+      (when (memex-core-tests--running-p)
+        (setq deadline (min ceiling (+ (float-time) bound)))))
     (funcall predicate)))
 
 (defun memex-core-tests--pump (seconds)

@@ -120,10 +120,14 @@ Keying on the id alone would collapse one onto the other."
 
 (ert-deftest memex-org-following-a-link-reaches-the-open-path ()
   "Opening a link through Org hands the open path the record's triple.
-The herdr bridge takes the links when it is loaded and the viewer takes
-them when it is not — memex-org never requires it.  The awkward path
-arrives intact and the record without a `doc_id' opens its session with
-none."
+The bridge takes the links whenever it is callable, which the autoload
+cookie on `memex-herdr-open-session' makes it before memex-herdr is
+loaded — so every installation with generated loaddefs takes the first
+branch, and probing `featurep' instead would take the second one there
+forever.  The viewer takes the links only where memex-herdr is absent
+altogether, the file-by-file checkout the second half stands in for.
+The awkward path arrives intact and the record without a `doc_id' opens
+its session with none."
   (let ((links (list (memex-org-link (memex-org-tests--record
                                       8801 memex-org-tests--session-id
                                       memex-org-tests--source-path))
