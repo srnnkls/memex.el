@@ -20,8 +20,8 @@
 ;;
 ;; The replacements carry the names and arities herdr.el exports:
 ;; `herdr-start-server-if-needed' (herdr-core.el:377),
-;; `herdr-api-tab-create' (herdr-api.el:247) and
-;; `herdr-api-pane-send-text' (herdr-api.el:711).
+;; `herdr-open-tab' (herdr.el:149) and
+;; `herdr-api-agent-start' (herdr-api.el:421).
 
 ;;; Code:
 
@@ -50,12 +50,13 @@
 (defconst memex-herdr-tests--tab
   '((tab_id . "tab-1")
     (root_pane . ((pane_id . "pane-7") (terminal_id . "term-3"))))
-  "The result `herdr-api-tab-create' answers with in these tests.")
+  "The result `herdr-open-tab' answers with in these tests.")
 
 (defvar memex-herdr-tests--calls nil
   "Every call the bridge made during a run, newest first.
 An entry is (ensure), (shell PROGRAM . ARGUMENTS), (tab-create . KEYS),
-\(send-text PANE-ID TEXT) or (view SESSION-ID SOURCE-PATH DOC-ID DISPLAY).")
+\(agent-start KIND NAME PANE-ID KEYS) or
+\(view SESSION-ID SOURCE-PATH DOC-ID DISPLAY).")
 
 (defvar memex-herdr-tests--messages nil
   "Every message the bridge reported during a run, newest first.")
@@ -128,8 +129,8 @@ A non-nil `memex-herdr-tests--unreachable' makes the readiness step signal
   `(let ((memex-herdr-tests--calls nil)
          (memex-herdr-tests--messages nil))
      (memex-herdr-tests--letf
-         '(herdr-start-server-if-needed herdr-api-tab-create
-                                        herdr-api-pane-send-text)
+         '(herdr-start-server-if-needed herdr-open-tab
+                                        herdr-api-agent-start)
          (((symbol-function 'call-process) (memex-herdr-tests--shell ,json))
           ((symbol-function 'process-file) (memex-herdr-tests--shell ,json))
           ((symbol-function 'executable-find) (memex-herdr-tests--which))
@@ -140,13 +141,14 @@ A non-nil `memex-herdr-tests--unreachable' makes the readiness step signal
                       (signal 'herdr-error
                               (list "no herdr server answering on /tmp/herdr.sock"))
                     t)))
-          ((symbol-function 'herdr-api-tab-create)
+          ((symbol-function 'herdr-open-tab)
            (lambda (&rest keys)
              (push (cons 'tab-create keys) memex-herdr-tests--calls)
              memex-herdr-tests--tab))
-          ((symbol-function 'herdr-api-pane-send-text)
-           (lambda (pane-id text)
-             (push (list 'send-text pane-id text) memex-herdr-tests--calls)
+          ((symbol-function 'herdr-api-agent-start)
+           (lambda (kind name pane-id &rest keys)
+             (push (list 'agent-start kind name pane-id keys)
+                   memex-herdr-tests--calls)
              nil))
           ((symbol-function 'memex-view-session)
            (lambda (session-id source-path &optional doc-id display)
@@ -238,13 +240,16 @@ probed for on the three branches that never touch it."
           (let ((log (seq-remove (lambda (call) (eq (car call) 'view))
                                  (reverse memex-herdr-tests--calls))))
             (should (equal (mapcar #'car log)
-                           '(shell ensure tab-create send-text)))
+                           '(shell ensure tab-create agent-start)))
             (let ((keys (cdr (nth 2 log))))
               (should (equal (plist-get keys :cwd)
                              "/tmp/memex-herdr-tests/proj"))
               (should (null (plist-get keys :workspace-id))))
-            (should (equal (nth 1 (nth 3 log)) "pane-7"))
-            (should (equal (nth 2 (nth 3 log)) "codex resume 7f\n"))))
+            (pcase-let ((`(,_ ,kind ,name ,pane ,keys) (nth 3 log)))
+              (should (equal kind "codex"))
+              (should (equal name memex-herdr-tests--session-id))
+              (should (equal pane "pane-7"))
+              (should (equal (plist-get keys :args) '("resume" "7f"))))))
       (delete-file path))))
 
 (ert-deftest memex-herdr-resume-falls-back-from-cwd-to-git-root-to-the-transcript-directory ()
@@ -286,7 +291,7 @@ probed for on the three branches that never touch it."
                                      "codex resume decoy"))
           (memex-herdr-tests--reporting (memex-herdr-resume record))
           (should (null (memex-herdr-tests--of 'tab-create)))
-          (should (null (memex-herdr-tests--of 'send-text)))
+          (should (null (memex-herdr-tests--of 'agent-start)))
           (should (null (memex-herdr-tests--of 'view)))
           (should (memex-herdr-tests--reported-p
                    memex-herdr-tests--session-id)))
@@ -311,7 +316,7 @@ probed for on the three branches that never touch it."
                                  "--limit"
                                  (number-to-string memex-resume-lookup-limit))))
             (should (null (memex-herdr-tests--of 'tab-create)))
-            (should (null (memex-herdr-tests--of 'send-text)))
+            (should (null (memex-herdr-tests--of 'agent-start)))
             (should (memex-herdr-tests--reported-p "openclaw"))
             (let ((view (car (memex-herdr-tests--of 'view))))
               (should view)
@@ -332,7 +337,7 @@ probed for on the three branches that never touch it."
       (memex-herdr-tests--reporting (memex-herdr-resume record))
       (should (null (memex-herdr-tests--of 'shell)))
       (should (null (memex-herdr-tests--of 'tab-create)))
-      (should (null (memex-herdr-tests--of 'send-text)))
+      (should (null (memex-herdr-tests--of 'agent-start)))
       (should (memex-herdr-tests--reported-p path))
       (let ((view (car (memex-herdr-tests--of 'view))))
         (should view)
@@ -353,7 +358,7 @@ probed for on the three branches that never touch it."
           (memex-herdr-tests--reporting (memex-herdr-resume record))
           (should (memex-herdr-tests--of 'ensure))
           (should (null (memex-herdr-tests--of 'tab-create)))
-          (should (null (memex-herdr-tests--of 'send-text)))
+          (should (null (memex-herdr-tests--of 'agent-start)))
           (should (memex-herdr-tests--reported-p "no herdr server answering")))
       (delete-file path))))
 
@@ -362,8 +367,8 @@ probed for on the three branches that never touch it."
          (record (memex-herdr-tests--record path))
          (memex-herdr-tests--calls nil)
          (memex-herdr-tests--messages nil))
-    (should-not (fboundp 'herdr-api-tab-create))
-    (should-not (fboundp 'herdr-api-pane-send-text))
+    (should-not (fboundp 'herdr-open-tab))
+    (should-not (fboundp 'herdr-api-agent-start))
     (unwind-protect
         (cl-letf (((symbol-function 'call-process)
                    (memex-herdr-tests--shell
