@@ -9,7 +9,7 @@
 ;; Run with:
 ;;   emacs -Q --batch -L . -l memex-tests.el -f ert-run-tests-batch-and-exit
 ;;
-;; Loading this file loads all ten per-module suites, so one command runs
+;; Loading this file loads all thirteen per-module suites, so one command runs
 ;; every test; each suite still runs on its own.  The fixtures record the
 ;; wire and pin what the client makes of it; the live-contract test is the
 ;; only one that can see memex change underneath them, and it skips itself
@@ -20,6 +20,8 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'seq)
+(require 'memex-tests-support)
+
 (require 'memex-core)
 (require 'memex-api)
 (require 'memex-completion)
@@ -32,6 +34,9 @@
 (require 'memex-usage-tests)
 (require 'memex-evil-tests)
 (require 'memex-herdr-tests)
+(require 'memex-entry-tests)
+(require 'memex-anchor-tests)
+(require 'memex-markdown-tests)
 (require 'memex-embark-tests)
 (require 'memex-org-tests)
 
