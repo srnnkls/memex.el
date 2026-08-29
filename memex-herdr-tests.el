@@ -32,6 +32,7 @@
 (require 'memex-core)
 
 (require 'memex-herdr nil t)
+(require 'memex-anchor nil t)
 
 (declare-function memex-herdr-resume "memex-herdr")
 (declare-function memex-herdr-open-session "memex-herdr")
@@ -150,6 +151,11 @@ A non-nil `memex-herdr-tests--unreachable' makes the readiness step signal
              (push (list 'agent-start kind name pane-id keys)
                    memex-herdr-tests--calls)
              nil))
+          ((symbol-function 'memex-anchor--herdr-p) (lambda () t))
+          ((symbol-function 'memex-anchor-resume)
+           (lambda (record resume)
+             (memex-herdr--start (cdr resume) (car resume)
+                                 (alist-get 'session_id record))))
           ((symbol-function 'memex-view-session)
            (lambda (session-id source-path &optional doc-id display)
              (push (list 'view session-id source-path doc-id display)
@@ -200,6 +206,29 @@ SOURCE defaults to \"codex\"."
   (seq-find (lambda (message)
               (string-match-p (regexp-quote text) message))
             memex-herdr-tests--messages))
+
+(ert-deftest memex-herdr-resume-delegates-the-looked-up-session-to-the-anchor ()
+  (let* ((path (memex-herdr-tests--transcript))
+         (record (memex-herdr-tests--record path))
+         (row-json (memex-herdr-tests--row
+                    memex-herdr-tests--session-id path
+                    "/tmp/memex-herdr-tests/proj" nil "codex resume 7f"))
+         resolved)
+    (unwind-protect
+        (memex-herdr-tests--run (memex-herdr-tests--rows row-json)
+          (cl-letf (((symbol-function 'memex-anchor--herdr-p)
+                     (lambda () t))
+                    ((symbol-function 'memex-anchor-resume)
+                     (lambda (given-record resume)
+                       (setq resolved (list given-record resume)))))
+            (memex-herdr-resume record))
+          (should (equal (car resolved) record))
+          (should (equal (car (cadr resolved)) "codex resume 7f"))
+          (should (equal (alist-get 'session_id (cdr (cadr resolved)))
+                         memex-herdr-tests--session-id))
+          (should (null (memex-herdr-tests--of 'tab-create)))
+          (should (null (memex-herdr-tests--of 'agent-start))))
+      (delete-file path))))
 
 (ert-deftest memex-herdr-resume-looks-the-session-up-with-one-limited-shell-out ()
   (let* ((path (memex-herdr-tests--transcript))

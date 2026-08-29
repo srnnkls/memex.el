@@ -68,10 +68,12 @@ magit. `t` folds every tool field in the session at once, `n`/`p` move a whole
 record at a time, and `a` reads the record point is on in the session that is
 still running it — `g a` under evil, where `a` and `j` belong to normal state.
 `memex-anchor-target` says whether that means the indexed transcript or the
-agent's own terminal; it is the transcript by default. A ghostel terminal stays
-attached as an observer, takes writable control and the shared PTY geometry only
-while its Emacs window has focus, then releases both so Herdr's foreground
-client reflows the same terminal. The turn's header stays put in the header
+agent's own terminal; it uses the live terminal by default. Memex joins the pane
+whose agent reports the same session ID or transcript path, without guessing
+identity from terminal content. Ghostel, vterm and Eat remain live observers,
+take writable control and shared PTY geometry only while a selected Emacs
+window has focus, then release both so Herdr's foreground client can reflow the
+same terminal. The turn's header stays put in the header
 line while you scroll through it, and a tool's input and output are fontified
 in the mode its tool and file path imply.
 

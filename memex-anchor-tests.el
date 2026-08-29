@@ -27,22 +27,19 @@
 (declare-function memex-anchor--skeleton "memex-anchor")
 (declare-function memex-anchor--locate "memex-anchor")
 (declare-function memex-anchor-on-screen-p "memex-anchor")
-(declare-function memex-anchor--hits "memex-anchor")
-(declare-function memex-anchor--drawn "memex-anchor")
 (declare-function memex-anchor--by-directory "memex-anchor")
 (declare-function memex-anchor--by-session "memex-anchor")
 (declare-function memex-anchor--agents "memex-anchor")
-(declare-function memex-anchor--best "memex-anchor")
 (declare-function memex-anchor--session-buffer "memex-anchor")
 (declare-function memex-anchor--goto "memex-anchor")
 (declare-function memex-anchor--land "memex-anchor")
 (declare-function memex-anchor--resolve "memex-anchor")
+(declare-function memex-anchor-resume "memex-anchor")
 (declare-function memex-herdr-resume "memex-herdr")
 (declare-function memex-anchor--resume "memex-anchor")
 (declare-function memex-anchor--resume-command "memex-anchor")
 (declare-function memex-anchor--start "memex-anchor")
 (declare-function memex-anchor-setup "memex-anchor")
-(declare-function memex-anchor--panes "memex-anchor")
 (declare-function memex-anchor--enter "memex-anchor")
 (declare-function memex-anchor--attach "memex-anchor")
 (defvar memex-anchor-takeover)
@@ -52,8 +49,6 @@
 (declare-function memex-anchor--locate-reduced "memex-anchor")
 
 (defvar memex-anchor-window)
-(defvar memex-anchor-minimum-hits)
-(defvar memex-anchor-minimum-margin)
 
 (defconst memex-anchor-tests--record
   "The `herdr-status` scope is ready: all three round-13 reviewers passed \
@@ -120,38 +115,6 @@ gate: scopes/draft/h"
                                         "unrelated scrollback")))
 
 
-(ert-deftest memex-anchor-hits-counts-the-messages-drawn-on-screen ()
-  "Records too short to judge are not counted either way."
-  (let ((records `(((role . "assistant") (text . ,memex-anchor-tests--record))
-                   ((role . "assistant")
-                    (text . "nothing here matches the pane at all, not one bit"))
-                   ((role . "assistant") (text . "short")))))
-    (should (equal (memex-anchor--hits records memex-anchor-tests--rendered)
-                   1))))
-
-(ert-deftest memex-anchor-counts-only-what-a-terminal-draws ()
-  "A tool call is drawn as a summary of itself and its result as a fold,
-so neither is ever on screen the way memex recorded it.  Counting them
-made every pane look like it was running nothing: the pane on this very
-session scored 0.03 with them in and 0.14 with them out."
-  (let ((call `((role . "tool_use") (tool_name . "Bash")
-                (text . ,memex-anchor-tests--record)))
-        (message `((role . "assistant") (text . ,memex-anchor-tests--record)))
-        (injected `((role . "user")
-                    (text . ,(concat "<system-reminder> "
-                                     memex-anchor-tests--record)))))
-    (should (equal (mapcar (lambda (r) (alist-get 'role r))
-                           (memex-anchor--drawn (list call message injected)))
-                   '("assistant")))
-    (should (equal (memex-anchor--hits (list call)
-                                       memex-anchor-tests--rendered)
-                   0))))
-
-(ert-deftest memex-anchor-hits-of-nothing-judgeable-is-zero ()
-  (should (equal (memex-anchor--hits '(((role . "assistant") (text . "tiny")))
-                                     "whatever")
-                 0)))
-
 (ert-deftest memex-anchor-adopts-the-one-agent-working-where-the-session-did ()
   "A background agent keeps a couple of thousand characters of a
 condensed view, so what it holds has usually scrolled past whatever
@@ -176,38 +139,6 @@ the session's own directory is the answer then; two is not."
                              (cwd . "/tmp/one"))))))
       (should-not (memex-anchor--by-directory record row)))))
 
-(ert-deftest memex-anchor-best-picks-the-pane-the-session-is-running-in ()
-  (let* ((records `(((role . "assistant") (text . ,memex-anchor-tests--record))))
-         (panes `(("w1:p1" . "unrelated scrollback about cabbages and rain")
-                  ("w2:p1" . ,memex-anchor-tests--rendered))))
-    (should (equal (car (memex-anchor--best records panes)) "w2:p1"))))
-
-(ert-deftest memex-anchor-best-abstains-when-no-pane-clears-the-rate ()
-  "Nothing on screen is answered with nothing, never with a best guess."
-  (let ((records `(((role . "assistant") (text . ,memex-anchor-tests--record))))
-        (panes '(("w1:p1" . "unrelated scrollback about cabbages and rain"))))
-    (should-not (memex-anchor--best records panes))))
-
-(ert-deftest memex-anchor-best-abstains-when-two-panes-tie ()
-  "A tie is the shape a wrong answer takes, so it is refused outright.
-Measured live, a resumed pane scored 24% for a session another pane
-scored 24% for; the rate alone would have picked one of them."
-  (let* ((records `(((role . "assistant") (text . ,memex-anchor-tests--record))))
-         (panes `(("w1:p1" . ,memex-anchor-tests--rendered)
-                  ("w2:p1" . ,memex-anchor-tests--rendered))))
-    (should-not (memex-anchor--best records panes))))
-
-(ert-deftest memex-anchor-best-requires-the-margin-not-only-the-rate ()
-  "A runner-up above half the winner's rate is not a decision."
-  (let* ((hit `((role . "assistant") (text . ,memex-anchor-tests--record)))
-         (miss '((role . "assistant")
-                 (text . "nothing on either pane matches this line of text")))
-         (records (list hit hit hit miss))
-         (near (concat memex-anchor-tests--rendered "\n"))
-         (panes `(("w1:p1" . ,near) ("w2:p1" . ,near))))
-    (should-not (memex-anchor--best records panes))))
-
-
 (ert-deftest memex-anchor-binds-itself-onto-the-viewer ()
   "Reading a record and jumping to the agent still running it is one
 motion, so the verb belongs on the viewer's own map.  Not on `j': evil
@@ -215,27 +146,6 @@ normal state spends that on `next-line'."
   (require 'memex-view)
   (memex-anchor-setup)
   (should (eq (keymap-lookup memex-session-mode-map "a") #'memex-anchor-show)))
-
-(ert-deftest memex-anchor-without-herdr-answers-no-panes ()
-  "The lookup runs inside a response callback, where a signal reaches the
-user as a failure in a process sentinel rather than as a message."
-  (cl-letf (((symbol-function 'memex-anchor--herdr-p) (lambda () nil)))
-    (should-not (memex-anchor--panes))))
-
-(ert-deftest memex-anchor-reduces-a-pane-once-not-once-per-record ()
-  "Reducing a pane costs the length of the pane, so doing it per record
-multiplies a 60k screen by the length of the tail.  Measured before this
-was fixed, one lookup over 15 panes took tens of seconds."
-  (let ((calls 0)
-        (records (mapcar (lambda (n)
-                           `((role . "assistant")
-                             (text . ,(format "record %d with enough letters to judge it" n))))
-                         (number-sequence 1 20))))
-    (cl-letf* ((original (symbol-function 'memex-anchor--skeleton))
-               ((symbol-function 'memex-anchor--skeleton)
-                (lambda (text) (setq calls (1+ calls)) (funcall original text))))
-      (memex-anchor--hits records "a screen showing nothing in particular"))
-    (should (<= calls (1+ (* 2 (length records)))))))
 
 (ert-deftest memex-anchor-goto-puts-point-where-the-terminal-drew-the-record ()
   "The live terminal's scrollback is its buffer's own text, so a record
@@ -287,6 +197,16 @@ fast path reads on the next jump."
                          "w9:p9")))
       (kill-buffer buffer))))
 
+(ert-deftest memex-anchor-resume-always-targets-the-live-terminal ()
+  (let ((memex-anchor-target 'transcript)
+        seen)
+    (cl-letf (((symbol-function 'memex-anchor--resolve-with-resume)
+               (lambda (_record _resume)
+                 (setq seen memex-anchor-target))))
+      (memex-anchor-resume '((session_id . "sess-1")) '("resume")))
+    (should (eq seen 'terminal))
+    (should (eq memex-anchor-target 'transcript))))
+
 (ert-deftest memex-anchor-starts-a-session-no-pane-is-running ()
   "A conversation nobody is running is worth starting, not worth
 answering with a read-only copy of what it used to say."
@@ -298,32 +218,30 @@ answering with a read-only copy of what it used to say."
               ((symbol-function 'memex-anchor--agents) (lambda () nil))
               ((symbol-function 'memex-anchor--herdr-p) (lambda () t)))
       (let ((record '((session_id . "sess-1") (text . "whatever"))))
-        (memex-anchor--resolve record nil)
+        (memex-anchor--resolve record)
         (should (equal (car started) record))
         (should (equal (cdr started) "claude --resume x"))))))
 
 (ert-deftest memex-anchor-shows-the-transcript-when-nothing-can-resume ()
   "Resuming needs a command memex recorded, and old sessions have none."
   (let ((shown nil))
-    (cl-letf (((symbol-function 'memex-anchor--resume-command) (lambda (_r) nil))
-              ((symbol-function 'memex-view-session)
+    (cl-letf (((symbol-function 'memex-view-session)
                (lambda (&rest args) (setq shown args))))
-      (memex-anchor--resume '((session_id . "sess-1") (text . "x"))))
+      (memex-anchor--resume '((session_id . "sess-1") (text . "x")) nil))
     (should shown)))
 
 (ert-deftest memex-anchor-reports-a-start-that-refuses ()
   "This runs inside a response callback, where a signal is swallowed as a
 process-sentinel failure and the user sees nothing happen at all."
   (let ((shown nil) (said nil))
-    (cl-letf (((symbol-function 'memex-anchor--resume-command)
-               (lambda (_r) (cons "claude --resume x" nil)))
-              ((symbol-function 'memex-anchor--start)
+    (cl-letf (((symbol-function 'memex-anchor--start)
                (lambda (&rest _) (user-error "Herdr is not installed")))
               ((symbol-function 'memex-view-session)
                (lambda (&rest args) (setq shown args)))
               ((symbol-function 'message)
                (lambda (fmt &rest args) (setq said (apply #'format fmt args)))))
-      (memex-anchor--resume '((session_id . "sess-1") (text . "x"))))
+      (memex-anchor--resume '((session_id . "sess-1") (text . "x"))
+                            (cons "claude --resume x" nil)))
     (should shown)
     (should (string-search "Herdr is not installed" said))))
 
@@ -389,12 +307,9 @@ scrollback already on screen and stayed at the head of it."
       (when (buffer-live-p other) (kill-buffer other)))))
 
 (ert-deftest memex-anchor-joins-a-pane-on-the-session-it-reports ()
-  "An identifier on both sides is the whole join; the screens are the
-fallback for a herdr nobody has told which session an agent is running.
-herdr answers with an object naming what kind of thing it holds, and a
-pane running an agent that never reported one carries no object at all,
-so both have to read as no match rather than as a match against nil."
-  (let ((record '((session_id . "abc-123"))))
+  "An exact ID or transcript path on both sides is the whole join."
+  (let ((record '((session_id . "abc-123")
+                  (source_path . "/tmp/abc-123.jsonl"))))
     (cl-letf (((symbol-function 'memex-anchor--agents)
                (lambda ()
                  '(((pane_id . "w1:p1")
@@ -402,6 +317,12 @@ so both have to read as no match rather than as a match against nil."
                    ((pane_id . "w2:p1")
                     (agent_session . ((kind . "id") (value . "abc-123"))))))))
       (should (equal (memex-anchor--by-session record) "w2:p1")))
+    (cl-letf (((symbol-function 'memex-anchor--agents)
+               (lambda ()
+                 '(((pane_id . "w3:p1")
+                    (agent_session . ((kind . "path")
+                                      (value . "/tmp/abc-123.jsonl"))))))))
+      (should (equal (memex-anchor--by-session record) "w3:p1")))
     (cl-letf (((symbol-function 'memex-anchor--agents)
                (lambda () '(((pane_id . "w1:p1")) ((pane_id . "w2:p1"))))))
       (should-not (memex-anchor--by-session record)))
@@ -413,6 +334,43 @@ so both have to read as no match rather than as a match against nil."
     (cl-letf (((symbol-function 'memex-anchor--agents)
                (lambda () '(((pane_id . "w1:p1"))))))
       (should-not (memex-anchor--by-session '((session_id . nil)))))))
+
+(ert-deftest memex-anchor-resolves-an-exact-session-without-reading-pane-screens ()
+  (let ((entered nil)
+        (record '((session_id . "abc-123") (source_path . "/tmp/a.jsonl"))))
+    (cl-letf (((symbol-function 'memex-anchor--herdr-p) (lambda () t))
+              ((symbol-function 'memex-anchor--by-session) (lambda (_record) "w2:p1"))
+              ((symbol-function 'herdr-pane-text)
+               (lambda (&rest _) (error "read pane screen")))
+              ((symbol-function 'memex-anchor--enter)
+               (lambda (seen pane) (setq entered (cons seen pane)))))
+      (memex-anchor--resolve record)
+      (should (equal entered (cons record "w2:p1"))))))
+
+(ert-deftest memex-anchor-show-resolves-without-fetching-a-transcript-tail ()
+  (let ((record '((session_id . "abc-123") (source_path . "/tmp/a.jsonl")))
+        (resolved nil))
+    (cl-letf (((symbol-function 'memex-anchor--session-buffer) (lambda (_id) nil))
+              ((symbol-function 'memex-api-session-page)
+               (lambda (&rest _) (error "fetched transcript tail")))
+              ((symbol-function 'memex-anchor--resolve)
+               (lambda (seen &optional _tail) (setq resolved seen))))
+      (memex-anchor-show record)
+      (should (equal resolved record)))))
+
+(ert-deftest memex-anchor-computes-resume-data-once ()
+  (let ((lookups 0)
+        (record '((session_id . "abc-123") (source_path . "/tmp/a.jsonl"))))
+    (cl-letf (((symbol-function 'memex-anchor--herdr-p) (lambda () t))
+              ((symbol-function 'memex-anchor--by-session) (lambda (_record) nil))
+              ((symbol-function 'memex-anchor--agents) (lambda () nil))
+              ((symbol-function 'memex-anchor--resume-command)
+               (lambda (_record)
+                 (cl-incf lookups)
+                 (cons "claude --resume abc-123" '((cwd . "/tmp")))))
+              ((symbol-function 'memex-anchor--start) (lambda (&rest _) nil)))
+      (memex-anchor--resolve record)
+      (should (= lookups 1)))))
 
 (ert-deftest memex-anchor-attaches-with-focus-following-control ()
   "The terminal accepts input while selected, then releases control and

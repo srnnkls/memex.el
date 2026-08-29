@@ -37,9 +37,8 @@
 
 (declare-function herdr-start-server-if-needed "herdr-core" ())
 (declare-function herdr-open-tab "herdr" (&rest keys))
-(declare-function memex-anchor-pane-for "memex-anchor" (record))
-(declare-function memex-anchor-show "memex-anchor" (record))
-(defvar memex-anchor-target)
+(declare-function memex-anchor--herdr-p "memex-anchor" ())
+(declare-function memex-anchor-resume "memex-anchor" (record resume))
 (declare-function herdr-api-agent-start "herdr-api"
                   (kind name pane-id &rest keys))
 (declare-function +ws-pin-of "ext:+workspace-pins" (buffer))
@@ -145,38 +144,25 @@ starting, and what lets herdr answer whether the agent came up."
       (cons (file-name-nondirectory (car parts)) (cdr parts)))))
 
 (defun memex-herdr--start (row command &optional name)
-  "Open a herdr tab for ROW, start COMMAND's agent in it, return the pane.
-The tab is created without a workspace, which puts it in the focused
-one.  herdr starts the agent by kind and arguments and answers once it
-has seen it come up, so an agent that refused to resume is reported
-rather than left in a tab nobody looked at.  NAME labels it."
-  (pcase-let* ((`(,kind . ,arguments) (memex-herdr--arguments command))
-               (tab (herdr-open-tab :cwd (memex-herdr--directory row)))
-               (pane (alist-get 'pane_id (alist-get 'root_pane tab))))
+  "Open a Herdr tab for ROW and start COMMAND's agent as NAME."
+  (pcase-let ((`(,kind . ,arguments) (memex-herdr--arguments command)))
     (unless kind
       (user-error "Memex recorded no agent to resume this session with"))
-    (herdr-api-agent-start kind (or name kind) pane
-                           :args arguments
-                           :timeout-ms memex-herdr-start-timeout)
-    pane))
+    (memex-herdr--ready-server)
+    (let* ((tab (herdr-open-tab :cwd (memex-herdr--directory row)))
+           (pane (alist-get 'pane_id (alist-get 'root_pane tab))))
+      (herdr-api-agent-start kind (or name kind) pane
+                             :args arguments
+                             :timeout-ms memex-herdr-start-timeout)
+      pane)))
 
 ;;;###autoload
 (defun memex-herdr-resume (record)
-  "Resume the session RECORD belongs to in a herdr tab, returning nothing.
-RECORD is a record alist, which is what the selectors, the viewer and
-memex's search all carry: its `session_id', `source_path' and `source'
-name the session.  Called in a viewer buffer it resumes that buffer's
-session without prompting.
-
-An agent refuses to resume a session it is already running, so a pane
-already on it is attached to rather than started again: herdr is asked
-which session each of its agents reports, and a hit hands the whole
-thing to `memex-anchor-show'.  Only a session nobody is running reaches
-the tab-and-command path below.
-
-The session is shown in the viewer instead when its transcript is gone
-from disk or memex recorded no resume command for it; what the branches
-answer with differs and none of it is meant to be read."
+  "Resume the session RECORD belongs to in a Herdr terminal.
+RECORD is the alist carried by Memex selectors and session buffers.  An
+existing agent is attached by exact session reference; otherwise the
+same anchor resolver starts it from Memex's recorded resume command.
+Missing transcripts or resume commands open the indexed session."
   (interactive
    (list (if (derived-mode-p 'memex-session-mode)
              (list (cons 'session_id memex-view-session-id)
@@ -204,13 +190,12 @@ answer with differs and none of it is meant to be read."
           (message "memex resume: no %s resume command for this session, showing the transcript"
                    source)
           (memex-herdr-open-session session-id source-path doc-id))
-         ((and (require 'memex-anchor nil t)
-               (memex-anchor-pane-for record))
-          (message "memex resume: an agent is already running this session")
-          (let ((memex-anchor-target 'terminal))
-            (memex-anchor-show record)))
-         (t (memex-herdr--ready-server)
-            (memex-herdr--start row command session-id)))))))
+         ((not (require 'memex-anchor nil t))
+          (user-error "Memex anchor support is unavailable"))
+         (t
+          (unless (memex-anchor--herdr-p)
+            (memex-herdr--ready-server))
+          (memex-anchor-resume record (cons command row))))))))
 
 (provide 'memex-herdr)
 ;;; memex-herdr.el ends here
