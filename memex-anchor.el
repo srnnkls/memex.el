@@ -29,6 +29,8 @@
 (declare-function herdr-attach-entry "herdr" (entry))
 (declare-function herdr-terminal-buffer "herdr" (terminal-id))
 (declare-function herdr-session-for "herdr" (&optional directory))
+(declare-function herdr-attach-ready-p "herdr" (&optional buffer))
+(defvar herdr-attach-ready-hook)
 (defvar herdr-attach-takeover)
 
 (defgroup memex-anchor nil
@@ -233,6 +235,26 @@ rather than attached twice."
                       (alist-get 'source_path record)
                       (alist-get 'doc_id record)))
 
+(defun memex-anchor--finish-land (buffer record pane-id)
+  "Land on RECORD in ready BUFFER, falling back from PANE-ID when absent."
+  (if (memex-anchor--goto buffer (alist-get 'text record))
+      buffer
+    (memex-anchor--fallback
+     record (format "%s is running this session but has scrolled past this record"
+                    pane-id))))
+
+(defun memex-anchor--land-when-ready (buffer record pane-id)
+  "Finish landing on RECORD once BUFFER has received PANE-ID's first frame."
+  (let (finish)
+    (setq finish
+          (lambda ()
+            (remove-hook 'herdr-attach-ready-hook finish t)
+            (when (buffer-live-p buffer)
+              (memex-anchor--finish-land buffer record pane-id))))
+    (with-current-buffer buffer
+      (add-hook 'herdr-attach-ready-hook finish nil t)))
+  buffer)
+
 (defun memex-anchor--land (buffer record session-id pane-id)
   "Show BUFFER with point where RECORD was drawn, remembering what it is.
 SESSION-ID and PANE-ID are stamped on the buffer so a later jump into
@@ -241,10 +263,12 @@ the same conversation finds it without resolving anything."
     (setq-local memex-anchor-session-id session-id)
     (setq-local memex-anchor-pane-id pane-id))
   (pop-to-buffer buffer)
-  (unless (memex-anchor--goto buffer (alist-get 'text record))
-    (message "memex anchor: %s is running this session but has scrolled past this record"
-             pane-id))
-  buffer)
+  (cond
+   ((memex-anchor--goto buffer (alist-get 'text record)) buffer)
+   ((and (fboundp 'herdr-attach-ready-p)
+         (not (herdr-attach-ready-p buffer)))
+    (memex-anchor--land-when-ready buffer record pane-id))
+   (t (memex-anchor--finish-land buffer record pane-id))))
 
 (defcustom memex-anchor-target 'terminal
   "Where to read a record whose live Herdr pane is known.

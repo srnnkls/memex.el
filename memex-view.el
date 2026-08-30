@@ -966,6 +966,13 @@ transcript is folded away by the time one is searched for."
   (when-let* ((section (magit-section-at position)))
     (magit-section-reveal section)))
 
+(defun memex-view--goto-position (position)
+  "Move the buffer and every window showing it to POSITION."
+  (goto-char position)
+  (memex-view--reveal position)
+  (dolist (window (get-buffer-window-list (current-buffer) nil t))
+    (set-window-point window position)))
+
 (defun memex-view-jump-to-hit (record)
   "Move point to where this session renders RECORD.
 RECORD is a record alist, which is what the selectors and memex's
@@ -974,8 +981,7 @@ search answer with; it is found again by its `doc_id'."
          (position (memex-view--record-position doc-id)))
     (unless position
       (user-error "This session renders no record %s" doc-id))
-    (goto-char position)
-    (memex-view--reveal position)))
+    (memex-view--goto-position position)))
 
 (defun memex-view-search-in-session (query)
   "Search this session alone for QUERY and move point to the hit read.
@@ -1095,14 +1101,13 @@ puts the viewer in the workspace the session is pinned to."
                        (generate-new-buffer
                         (memex-view--buffer-name session-id source-path)))))
        (memex-view--render buffer context session-id source-path)
-       (when doc-id
-         (with-current-buffer buffer
-           (when-let* ((position (memex-view--record-position doc-id)))
-             (goto-char position)
-             (memex-view--reveal position))))
        (if display
            (funcall display buffer)
-         (display-buffer buffer memex-view-display-action))))))
+         (display-buffer buffer memex-view-display-action))
+       (with-current-buffer buffer
+         (memex-view--goto-position
+          (or (and doc-id (memex-view--record-position doc-id))
+              (point-min))))))))
 
 (provide 'memex-view)
 ;;; memex-view.el ends here

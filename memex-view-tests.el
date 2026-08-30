@@ -406,7 +406,12 @@ finds it."
                                              memex-view-tests--source-path
                                              8803)))
         (with-current-buffer buffer
-          (should (equal (get-text-property (point) 'memex-record) tool))))
+          (should (equal (get-text-property (point) 'memex-record) tool))
+          (let ((position (point))
+                (windows (get-buffer-window-list buffer nil t)))
+            (should windows)
+            (dolist (window windows)
+              (should (equal (window-point window) position))))))
     (memex-view-tests--cleanup)))
 
 (ert-deftest memex-view-jump-to-hit-moves-point-to-the-record-it-names ()

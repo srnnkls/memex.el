@@ -246,19 +246,19 @@ process-sentinel failure and the user sees nothing happen at all."
     (should (string-search "Herdr is not installed" said))))
 
 (ert-deftest memex-anchor-enters-the-agents-own-terminal ()
-  "The attached terminal is the session; a copy of what herdr remembers
-of it is a third thing that looks like the session and is not one.  A
-record the terminal has scrolled past is said to be gone rather than
-conjured back."
+  "Use the terminal while it retains a record, else use the full transcript."
   (let ((terminal (generate-new-buffer "*herdr: test*"))
         (memex-anchor-target 'terminal)
         (attached nil)
+        (shown nil)
         (said nil))
     (unwind-protect
         (cl-letf (((symbol-function 'memex-anchor--agents)
                    (lambda () '(((pane_id . "w1:p1") (terminal_id . "t1")))))
                   ((symbol-function 'memex-anchor--attach)
                    (lambda (entry) (setq attached entry) terminal))
+                  ((symbol-function 'memex-view-session)
+                   (lambda (&rest args) (setq shown args)))
                   ((symbol-function 'message)
                    (lambda (format &rest arguments)
                      (push (apply #'format format arguments) said)))
@@ -280,7 +280,33 @@ conjured back."
              (text . "a line the terminal scrolled past a long time ago now"))
            "w1:p1")
           (should (seq-some (lambda (line) (string-search "scrolled past" line))
-                            said)))
+                            said))
+          (should (equal shown '("s1" nil nil))))
+      (kill-buffer terminal))))
+
+(ert-deftest memex-anchor-land-waits-for-the-first-terminal-frame ()
+  "Attachment returns before its asynchronous first frame is searchable."
+  (let ((terminal (generate-new-buffer "*herdr: delayed frame*"))
+        (line "the terminal frame arrived after attachment completed successfully")
+        (ready nil)
+        (fallback nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'pop-to-buffer) #'ignore)
+                  ((symbol-function 'herdr-attach-ready-p)
+                   (lambda (&optional _) ready))
+                  ((symbol-function 'memex-anchor--fallback)
+                   (lambda (&rest args) (setq fallback args))))
+          (memex-anchor--land terminal `((text . ,line)) "s1" "w1:p1")
+          (should-not fallback)
+          (should (buffer-local-value 'herdr-attach-ready-hook terminal))
+          (with-current-buffer terminal
+            (insert "older output\n" line "\n")
+            (setq ready t)
+            (run-hooks 'herdr-attach-ready-hook)
+            (should (equal (buffer-substring-no-properties
+                            (line-beginning-position) (line-end-position))
+                           line)))
+          (should-not fallback))
       (kill-buffer terminal))))
 
 (ert-deftest memex-anchor-land-moves-a-window-nobody-selected ()
