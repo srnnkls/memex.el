@@ -52,11 +52,13 @@
 (require 'memex-view)
 (require 'memex-usage)
 
-(declare-function consult--read "consult" (table &rest options))
-(declare-function consult--async-pipeline "consult" (&rest async))
-(declare-function consult--async-min-input "consult" (&optional min-input))
-(declare-function consult--async-throttle "consult" (&optional throttle debounce))
-(declare-function consult--lookup-member "consult" (selected candidates &rest _))
+(declare-function consult--read "ext:consult" (table &rest options))
+(declare-function consult--async-pipeline "ext:consult" (&rest async))
+(declare-function consult--async-min-input "ext:consult" (&optional min-input))
+(declare-function consult--async-throttle "ext:consult"
+                  (&optional throttle debounce))
+(declare-function consult--lookup-member "ext:consult"
+                  (selected candidates &rest _))
 (declare-function memex-herdr-open-session "memex-herdr"
                   (session-id source-path &optional doc-id))
 

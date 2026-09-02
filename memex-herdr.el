@@ -34,9 +34,9 @@
 (require 'memex-completion)
 (require 'memex-view)
 
-(declare-function herdr-start-server-if-needed "herdr-core" ())
-(declare-function herdr-api-tab-create "herdr-api" (&rest keys))
-(declare-function herdr-api-pane-send-text "herdr-api" (pane-id text))
+(declare-function herdr-start-server-if-needed "ext:herdr-core" ())
+(declare-function herdr-api-tab-create "ext:herdr-api" (&rest keys))
+(declare-function herdr-api-pane-send-text "ext:herdr-api" (pane-id text))
 (declare-function +ws-pin-of "ext:+workspace-pins" (buffer))
 (declare-function +ws-pin-buffer "ext:+workspace-pins"
                   (buffer &optional workspace))
