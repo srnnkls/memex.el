@@ -89,7 +89,8 @@ STDERR what it wrote to stderr.  EXECUTABLE is the binary that
 answered.  CALLBACK receives the response payload; ERRBACK receives
 the error object."
   (let* ((decoded (and (zerop status)
-                       (condition-case nil (memex--decode output) (error nil))))
+                       (condition-case nil (memex--decode output)
+                         (json-error nil))))
          (payload (and decoded (memex--response-payload decoded))))
     (cond
      ((null decoded)

@@ -283,6 +283,24 @@ would otherwise never release the wait."
         (should (equal (plist-get (cdr failure) :message) "no session caea32e0")))
     (memex-core-tests--cleanup)))
 
+(ert-deftest memex-core-unparsable-output-fails-the-transport ()
+  (unwind-protect
+      (let* ((memex-executable
+              (memex-core-tests--stub
+               (concat "cat > /dev/null\n"
+                       "printf '%s\\n' 'panic: index out of bounds'\n")))
+             (payload 'pending)
+             (failure nil))
+        (memex-rpc "search" '((spec . ((limit . 20))))
+                   (lambda (value) (setq payload value))
+                   (lambda (err) (setq failure err)))
+        (should (memex-core-tests--wait
+                 (lambda () (or failure (not (eq payload 'pending))))))
+        (should (eq payload 'pending))
+        (should (eq (car failure) 'memex-transport-error))
+        (should (equal (plist-get (cdr failure) :exit-status) 0)))
+    (memex-core-tests--cleanup)))
+
 (ert-deftest memex-core-non-zero-exit-attaches-stderr-verbatim ()
   (unwind-protect
       (let* ((memex-executable
