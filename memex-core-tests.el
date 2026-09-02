@@ -301,6 +301,49 @@ would otherwise never release the wait."
         (should (equal (plist-get (cdr failure) :exit-status) 0)))
     (memex-core-tests--cleanup)))
 
+(ert-deftest memex-core-a-request-that-cannot-be-sent-fails-the-transport ()
+  "A stub reads its request to end of file before it answers.
+When the write or the end of file does not reach it, it goes on reading
+and answers nothing, so a caller waiting on the request waits out its
+own deadline instead of being told the request never left."
+  (unwind-protect
+      (let* ((memex-executable
+              (memex-core-tests--stub
+               (concat "cat > /dev/null\n"
+                       "printf '%s' '{\"protocol\":1}'\n")))
+             (payload 'pending)
+             (failure nil))
+        (cl-letf (((symbol-function 'process-send-eof)
+                   (lambda (&rest _) (error "Broken pipe"))))
+          (memex-rpc "search" '((spec . ((limit . 20))))
+                     (lambda (value) (setq payload value))
+                     (lambda (err) (setq failure err))))
+        (should (memex-core-tests--wait (lambda () failure) 1.0))
+        (should (eq payload 'pending))
+        (should (eq (car failure) 'memex-transport-error)))
+    (memex-core-tests--cleanup)))
+
+(ert-deftest memex-core-output-that-is-not-an-envelope-fails-the-transport ()
+  "A scalar parses, so only its shape says it is not a response.
+Reaching into it for the envelope's fields signals inside the process
+sentinel, which answers neither callback nor errback and leaves a
+synchronous caller polling until its own deadline."
+  (unwind-protect
+      (let* ((memex-executable
+              (memex-core-tests--stub
+               (concat "cat > /dev/null\n"
+                       "printf '%s' 42\n")))
+             (payload 'pending)
+             (failure nil))
+        (memex-rpc "search" '((spec . ((limit . 20))))
+                   (lambda (value) (setq payload value))
+                   (lambda (err) (setq failure err)))
+        (should (memex-core-tests--wait
+                 (lambda () (or failure (not (eq payload 'pending))))))
+        (should (eq payload 'pending))
+        (should (eq (car failure) 'memex-transport-error)))
+    (memex-core-tests--cleanup)))
+
 (ert-deftest memex-core-non-zero-exit-attaches-stderr-verbatim ()
   (unwind-protect
       (let* ((memex-executable

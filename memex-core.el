@@ -89,7 +89,9 @@ STDERR what it wrote to stderr.  EXECUTABLE is the binary that
 answered.  CALLBACK receives the response payload; ERRBACK receives
 the error object."
   (let* ((decoded (and (zerop status)
-                       (condition-case nil (memex--decode output)
+                       (condition-case nil
+                           (let ((envelope (memex--decode output)))
+                             (and (listp envelope) envelope))
                          (json-error nil))))
          (payload (and decoded (memex--response-payload decoded))))
     (cond
@@ -151,10 +153,14 @@ or the request does not encode."
                  (unless (process-get process 'memex-cancelled)
                    (memex--dispatch-result status output stderr-text executable
                                            callback errback))))))))
-    (condition-case nil
+    (condition-case send
         (progn (process-send-string process request)
                (process-send-eof process))
-      (error nil))
+      (error
+       (memex-cancel-rpc process)
+       (memex--fail errback 'memex-transport-error
+                    (list :exit-status (process-exit-status process)
+                          :stderr (error-message-string send)))))
     process))
 
 (defun memex-cancel-rpc (process)
