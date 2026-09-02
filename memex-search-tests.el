@@ -41,10 +41,13 @@
 (require 'memex nil t)
 
 (declare-function memex-search--async "memex")
+(declare-function memex-search--debounce "memex")
 (declare-function memex-search "memex")
 (declare-function memex-herdr-open-session "memex-herdr")
 
 (defvar memex-search--consult-noted)
+(defvar memex-search-debounce)
+(defvar memex-search-default-mode)
 (defvar memex-search-group-by-session)
 (defvar memex-search-snippet-width)
 
@@ -582,6 +585,35 @@ a completion UI and every consumer of a candidate find them."
             (should (equal (plist-get request :query) "alfa"))
             (should (eq (memex-search-tests--mode request) 'hybrid)))
           (should (equal supplied records))))
+    (memex-search-tests--cleanup)))
+
+(ert-deftest memex-search-queries-under-hybrid-unasked ()
+  "A search naming no mode queries memex under `hybrid'.
+Lexical mode matches whole terms only, so a query typed one character
+at a time answers with nothing for every prefix that is not itself a
+term in the index: `abs' and `abst' hit, `absta' and `abstai' do not.
+Hybrid scores the embedded input beside the term match, so it also
+waits the debounce an embedding query is worth.
+
+The mode is what the command queries under unasked, so it is read off
+the option rather than bound here."
+  (unwind-protect
+      (cl-letf (((symbol-function 'memex-api-search)
+                 (memex-search-tests--answering-stub
+                  (memex-search-tests--matches)))
+                ((symbol-function 'read-string)
+                 (lambda (_prompt &optional initial &rest _) (or initial "")))
+                ((symbol-function 'memex-read-record) (lambda (&rest _) nil))
+                ((symbol-function 'memex-read-session) (lambda (&rest _) nil))
+                ((symbol-function 'message) (lambda (&rest _) nil)))
+        (should (eq (default-value 'memex-search-default-mode) 'hybrid))
+        (let ((memex-search--consult-noted t))
+          (memex-search nil "alfa"))
+        (should (eq (memex-search-tests--mode
+                     (car (memex-search-tests--requests)))
+                    'hybrid))
+        (should (equal (memex-search--debounce 'hybrid)
+                       (default-value 'memex-search-debounce))))
     (memex-search-tests--cleanup)))
 
 (ert-deftest memex-search-answers-with-one-candidate-to-a-session ()

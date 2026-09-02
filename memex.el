@@ -63,11 +63,23 @@
 (defconst memex-search-modes '(lexical semantic hybrid)
   "The search modes memex offers, in the order they are cycled through.")
 
+(defcustom memex-search-default-mode 'hybrid
+  "The mode a search names none of its own queries memex under.
+Lexical mode matches whole terms, so a query typed one character at a
+time drops to nothing on every prefix that is not itself a term in the
+index; hybrid scores the embedded input beside the term match.  Hybrid
+and semantic both need the embeddings `memex embed' generates, and fall
+back to the term match alone when the index carries no vectors."
+  :type (cons 'choice (mapcar (lambda (mode) (list 'const mode))
+                              memex-search-modes))
+  :group 'memex)
+
 (defcustom memex-search-debounce 0.4
-  "Seconds of quiet before a semantic query is sent.
-Layers on consult's own `consult-async-input-debounce', which the other
-modes keep: semantic mode embeds every debounced input, so it is worth
-waiting longer for the typing to settle than a lexical round trip is."
+  "Seconds of quiet before an embedding query is sent.
+Layers on consult's own `consult-async-input-debounce', which lexical
+mode keeps: semantic and hybrid embed every debounced input, so it is
+worth waiting longer for the typing to settle than a lexical round trip
+is."
   :type 'number
   :group 'memex)
 
@@ -107,7 +119,7 @@ over-fetches against it.")
 
 (defun memex-search--debounce (mode)
   "Return the input debounce MODE queries under, nil for consult's own."
-  (and (eq mode 'semantic) memex-search-debounce))
+  (and (memq mode '(semantic hybrid)) memex-search-debounce))
 
 (defun memex-search--candidate-limit ()
   "Return the number of matches to ask memex for.
@@ -363,8 +375,9 @@ recent window."
 ;;;###autoload
 (defun memex-search (&optional mode initial)
   "Search memex, open what was chosen and return its record.
-MODE is `lexical', `semantic' or `hybrid', defaulting to `lexical' and
-read from the minibuffer with a prefix argument.  INITIAL is the query
+MODE is `lexical', `semantic' or `hybrid', read from the minibuffer
+with a prefix argument and off `memex-search-default-mode' without one.
+INITIAL is the query
 the session starts from, which is what \\[memex-search-cycle-mode]
 carries across a mode switch.
 
@@ -379,7 +392,7 @@ static picker when it is not."
                                        (mapcar #'symbol-name
                                                memex-search-modes)
                                        nil t)))))
-  (let ((mode (or mode 'lexical)))
+  (let ((mode (or mode memex-search-default-mode)))
     (if (require 'consult nil t)
         (memex-search--consult mode initial)
       (memex-search--static mode initial))))
