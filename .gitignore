@@ -3,3 +3,5 @@
 scopes/
 resources
 *.elc
+.eask/
+dist/
