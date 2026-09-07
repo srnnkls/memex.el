@@ -23,6 +23,11 @@
 ;; asked for - a `session_id' names a session only along with the
 ;; transcript it was read from.
 ;;
+;; `memex-herdr-open-agent-session' goes the other way: from the terminal
+;; of an agent herdr attached, to the indexed transcript of the session it
+;; is running.  herdr reports that session by id or by transcript path and
+;; the viewer is keyed by both, so the same session window pairs them.
+;;
 ;; herdr and the `+ws-pin' helpers of the user's Doom configuration are
 ;; both optional: each is probed for at call time and its absence costs
 ;; only the feature it carries.
@@ -45,6 +50,8 @@
 (declare-function +ws-pin-buffer "ext:+workspace-pins"
                   (buffer &optional workspace))
 (declare-function +ws-pin-follow "ext:+workspace-pins" (buffer))
+(declare-function transient-append-suffix "transient" (prefix loc suffix &optional keep-other))
+(declare-function transient-get-suffix "transient" (prefix loc))
 
 (defcustom memex-resume-lookup-limit 5000
   "Number of recent sessions the resume lookup reads before matching.
@@ -92,27 +99,32 @@ here rather than at the head of a resume."
     (herdr-error (user-error "Cannot ready herdr: %s"
                              (error-message-string failure)))))
 
+(defun memex-herdr--sessions (&rest filters)
+  "Return the window of recent sessions FILTERS narrows, newest first.
+FILTERS are the arguments that go between `sessions --json-array' and
+the limit.  A shell-out that cannot run at all answers with no rows,
+which every caller reports as the session it could not find."
+  (condition-case nil
+      (with-temp-buffer
+        (let ((default-directory temporary-file-directory))
+          (when (eq 0 (apply #'call-process
+                             memex-executable nil t nil
+                             "sessions" "--json-array"
+                             (append filters
+                                     (list "--limit"
+                                           (number-to-string
+                                            memex-resume-lookup-limit)))))
+            (memex--decode (buffer-string)))))
+    (error nil)))
+
 (defun memex-herdr--row (session-id source-path source)
   "Return what memex knows of the session SESSION-ID at SOURCE-PATH.
 The window of recent SOURCE sessions is read in one shell-out and
-matched here on the two fields together.  A shell-out that cannot run at
-all - no SOURCE to ask about - answers with no rows, which the caller
-reports as the session it could not find."
-  (let ((rows (condition-case nil
-                  (with-temp-buffer
-                    (let ((default-directory temporary-file-directory))
-                      (when (eq 0 (call-process
-                                   memex-executable nil t nil
-                                   "sessions" "--json-array"
-                                   "--source" source
-                                   "--limit" (number-to-string
-                                              memex-resume-lookup-limit)))
-                        (memex--decode (buffer-string)))))
-                (error nil))))
-    (seq-find (lambda (row)
-                (and (equal (alist-get 'session_id row) session-id)
-                     (equal (alist-get 'source_path row) source-path)))
-              rows)))
+matched here on the two fields together."
+  (seq-find (lambda (row)
+              (and (equal (alist-get 'session_id row) session-id)
+                   (equal (alist-get 'source_path row) source-path)))
+            (memex-herdr--sessions "--source" source)))
 
 (defun memex-herdr--directory (row)
   "Return the directory a resume of ROW begins in.
@@ -196,6 +208,83 @@ Missing transcripts or resume commands open the indexed session."
           (unless (memex-anchor--herdr-p)
             (memex-herdr--ready-server))
           (memex-anchor-resume record (cons command row))))))))
+
+;;;; Reading the session an attached agent is running
+
+(defvar herdr-terminal-id)
+(declare-function memex-anchor--agents "memex-anchor" ())
+
+(defun memex-herdr--attached-agent (buffer)
+  "Return the herdr agent whose terminal BUFFER shows, or nil.
+herdr stamps `herdr-terminal-id' on every buffer it attaches, which is
+what tells an agent's own terminal apart from any other buffer."
+  (when-let* (((buffer-live-p buffer))
+              ((local-variable-p 'herdr-terminal-id buffer))
+              (terminal (buffer-local-value 'herdr-terminal-id buffer))
+              ((require 'memex-anchor nil t)))
+    (seq-find (lambda (agent)
+                (equal (alist-get 'terminal_id agent) terminal))
+              (memex-anchor--agents))))
+
+(defun memex-herdr--ref-row (reference directory)
+  "Return the session memex indexed for herdr's REFERENCE, or nil.
+herdr names a session by id or by transcript path and the viewer needs
+both, so the index is what pairs the one herdr reports with the other.
+DIRECTORY narrows the window to the sessions of the directory the agent
+works in; a session recorded elsewhere is looked for once more across
+the whole window."
+  (when-let* ((value (alist-get 'value reference))
+              (field (pcase (alist-get 'kind reference)
+                       ("id" 'session_id)
+                       ("path" 'source_path))))
+    (let ((match (lambda (rows)
+                   (seq-find (lambda (row) (equal (alist-get field row) value))
+                             rows))))
+      (or (and directory
+               (funcall match (memex-herdr--sessions "--cwd" directory)))
+          (funcall match (memex-herdr--sessions))))))
+
+;;;###autoload
+(defun memex-herdr-open-agent-session (&optional buffer)
+  "Show memex's transcript of the session the agent in BUFFER is running.
+BUFFER defaults to the current one and is an attached herdr terminal.
+The transcript is the whole conversation, including what the terminal
+has scrolled past, and reading it leaves the agent alone.
+
+A session herdr has not reported yet, or that memex has not indexed
+yet, is refused by name rather than opened empty."
+  (interactive)
+  (let* ((buffer (or buffer (current-buffer)))
+         (agent (memex-herdr--attached-agent buffer))
+         (reference (alist-get 'agent_session agent)))
+    (cond
+     ((null agent)
+      (user-error "No herdr agent is attached to %s" (buffer-name buffer)))
+     ((null reference)
+      (user-error "Herdr reports no session for %s"
+                  (or (alist-get 'name agent) (alist-get 'agent agent)
+                      "this agent")))
+     (t
+      (memex-herdr--ready)
+      (let ((row (memex-herdr--ref-row reference (alist-get 'cwd agent))))
+        (unless row
+          (user-error "Memex has indexed no session %s" (alist-get 'value reference)))
+        (memex-herdr-open-session (alist-get 'session_id row)
+                                  (alist-get 'source_path row)))))))
+
+;;;###autoload
+(defun memex-herdr-setup ()
+  "Offer an attached agent's transcript from herdr's own transient.
+Absent herdr the command remains, reachable by name; this only puts it
+where the rest of the agent commands are."
+  (when (and (fboundp 'transient-append-suffix)
+             (not (ignore-errors (transient-get-suffix 'herdr-transient "x"))))
+    (ignore-errors
+      (transient-append-suffix 'herdr-transient "i"
+        '("x" "memex transcript" memex-herdr-open-agent-session)))))
+
+(with-eval-after-load 'herdr-transient (memex-herdr-setup))
+;;;###autoload (with-eval-after-load 'herdr-transient (memex-herdr-setup))
 
 (provide 'memex-herdr)
 ;;; memex-herdr.el ends here

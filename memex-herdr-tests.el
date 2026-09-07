@@ -503,5 +503,142 @@ probed for on the three branches that never touch it."
           (should (equal displayed (list buffer))))
       (kill-buffer buffer))))
 
+(defconst memex-herdr-tests--agent-cwd "/tmp/memex-herdr-tests/proj"
+  "The directory herdr reports the attached agent working in.")
+
+(defun memex-herdr-tests--agent (reference)
+  "Return a herdr agent entry on terminal `term-3' reporting REFERENCE."
+  `((terminal_id . "term-3")
+    (name . "review")
+    (agent . "claude")
+    (pane_id . "pane-7")
+    (cwd . ,memex-herdr-tests--agent-cwd)
+    ,@(when reference (list (cons 'agent_session reference)))))
+
+(defun memex-herdr-tests--reference (kind value)
+  "Return the session reference herdr reports as KIND naming VALUE."
+  `((source . "herdr:claude") (agent . "claude")
+    (kind . ,kind) (value . ,value)))
+
+(defun memex-herdr-tests--queue (answers)
+  "Return a `call-process' replacement answering ANSWERS in turn.
+The last answer is repeated once the queue runs dry, so a test says only
+as many answers as it is about."
+  (lambda (program &optional _infile destination _display &rest arguments)
+    (push (cons 'shell (cons program arguments)) memex-herdr-tests--calls)
+    (let ((json (if (cdr answers) (pop answers) (car answers)))
+          (target (if (consp destination) (car destination) destination)))
+      (with-current-buffer (if (bufferp target) target (current-buffer))
+        (insert json)))
+    0))
+
+(defmacro memex-herdr-tests--attached (agent answers &rest body)
+  "Run BODY in a buffer herdr attached, with AGENT live and ANSWERS queued."
+  (declare (indent 2))
+  `(let ((memex-herdr-tests--calls nil)
+         (memex-herdr-tests--messages nil)
+         (memex-resume-lookup-limit 42)
+         (buffer (generate-new-buffer "*memex herdr tests terminal*")))
+     (unwind-protect
+         (cl-letf (((symbol-function 'call-process)
+                    (memex-herdr-tests--queue ,answers))
+                   ((symbol-function 'executable-find)
+                    (memex-herdr-tests--which))
+                   ((symbol-function 'memex-anchor--agents)
+                    (lambda () (delq nil (list ,agent))))
+                   ((symbol-function 'memex-view-session)
+                    (lambda (session-id source-path &optional doc-id display)
+                      (push (list 'view session-id source-path doc-id display)
+                            memex-herdr-tests--calls)
+                      nil)))
+           (with-current-buffer buffer
+             (setq-local herdr-terminal-id "term-3")
+             ,@body))
+       (kill-buffer buffer))))
+
+(ert-deftest memex-herdr-open-agent-session-views-the-session-herdr-reports-by-id ()
+  (memex-herdr-tests--attached
+      (memex-herdr-tests--agent
+       (memex-herdr-tests--reference "id" memex-herdr-tests--session-id))
+      (list (memex-herdr-tests--rows
+             (memex-herdr-tests--row memex-herdr-tests--other-session-id
+                                     "/tmp/memex-herdr-tests/other.jsonl"
+                                     memex-herdr-tests--agent-cwd nil nil)
+             (memex-herdr-tests--row memex-herdr-tests--session-id
+                                     "/tmp/memex-herdr-tests/a.jsonl"
+                                     memex-herdr-tests--agent-cwd nil nil)))
+    (memex-herdr-open-agent-session)
+    (let ((shells (memex-herdr-tests--of 'shell))
+          (view (car (memex-herdr-tests--of 'view))))
+      (should (equal (length shells) 1))
+      (should (equal (cdr (car shells))
+                     (list memex-executable "sessions" "--json-array"
+                           "--cwd" memex-herdr-tests--agent-cwd
+                           "--limit" "42")))
+      (should (equal (seq-take (cdr view) 2)
+                     (list memex-herdr-tests--session-id
+                           "/tmp/memex-herdr-tests/a.jsonl")))
+      (should (commandp 'memex-herdr-open-agent-session)))))
+
+(ert-deftest memex-herdr-open-agent-session-views-the-session-herdr-reports-by-path ()
+  (memex-herdr-tests--attached
+      (memex-herdr-tests--agent
+       (memex-herdr-tests--reference "path" "/tmp/memex-herdr-tests/a.jsonl"))
+      (list (memex-herdr-tests--rows
+             (memex-herdr-tests--row memex-herdr-tests--session-id
+                                     "/tmp/memex-herdr-tests/a.jsonl"
+                                     memex-herdr-tests--agent-cwd nil nil)))
+    (memex-herdr-open-agent-session)
+    (should (equal (seq-take (cdr (car (memex-herdr-tests--of 'view))) 2)
+                   (list memex-herdr-tests--session-id
+                         "/tmp/memex-herdr-tests/a.jsonl")))))
+
+(ert-deftest memex-herdr-open-agent-session-widens-past-the-agent-directory ()
+  (memex-herdr-tests--attached
+      (memex-herdr-tests--agent
+       (memex-herdr-tests--reference "id" memex-herdr-tests--session-id))
+      (list (memex-herdr-tests--rows)
+            (memex-herdr-tests--rows
+             (memex-herdr-tests--row memex-herdr-tests--session-id
+                                     "/tmp/memex-herdr-tests/a.jsonl"
+                                     "/tmp/memex-herdr-tests/elsewhere" nil nil)))
+    (memex-herdr-open-agent-session)
+    (let ((shells (memex-herdr-tests--of 'shell)))
+      (should (equal (length shells) 2))
+      (should (equal (cdr (nth 1 shells))
+                     (list memex-executable "sessions" "--json-array"
+                           "--limit" "42"))))
+    (should (equal (nth 1 (car (memex-herdr-tests--of 'view)))
+                   memex-herdr-tests--session-id))))
+
+(ert-deftest memex-herdr-open-agent-session-refuses-a-session-memex-has-not-indexed ()
+  (memex-herdr-tests--attached
+      (memex-herdr-tests--agent
+       (memex-herdr-tests--reference "id" memex-herdr-tests--session-id))
+      (list (memex-herdr-tests--rows))
+    (memex-herdr-tests--reporting (memex-herdr-open-agent-session))
+    (should (null (memex-herdr-tests--of 'view)))
+    (should (memex-herdr-tests--reported-p memex-herdr-tests--session-id))))
+
+(ert-deftest memex-herdr-open-agent-session-refuses-an-agent-with-no-session-yet ()
+  (memex-herdr-tests--attached
+      (memex-herdr-tests--agent nil)
+      (list (memex-herdr-tests--rows))
+    (memex-herdr-tests--reporting (memex-herdr-open-agent-session))
+    (should (null (memex-herdr-tests--of 'shell)))
+    (should (null (memex-herdr-tests--of 'view)))
+    (should (memex-herdr-tests--reported-p "review"))))
+
+(ert-deftest memex-herdr-open-agent-session-refuses-a-buffer-herdr-never-attached ()
+  (memex-herdr-tests--attached
+      (memex-herdr-tests--agent
+       (memex-herdr-tests--reference "id" memex-herdr-tests--session-id))
+      (list (memex-herdr-tests--rows))
+    (kill-local-variable 'herdr-terminal-id)
+    (memex-herdr-tests--reporting (memex-herdr-open-agent-session))
+    (should (null (memex-herdr-tests--of 'shell)))
+    (should (null (memex-herdr-tests--of 'view)))
+    (should (memex-herdr-tests--reported-p "memex herdr tests terminal"))))
+
 (provide 'memex-herdr-tests)
 ;;; memex-herdr-tests.el ends here
