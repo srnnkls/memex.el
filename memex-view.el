@@ -386,10 +386,11 @@ call took and what it is called trail behind marked as detail, which
                (call (memex-entry-call entry))
                (tool (memex-entry-tool entry))
                (took (memex-entry-duration entry))
-               (doc-id (alist-get 'doc_id call)))
+               (doc-id (alist-get 'doc_id call))
+               (mark (and (not tool) (memex-view--source-mark entry))))
     (concat
      (make-string memex-view-heading-indent ?\s)
-     (if-let* ((mark (and (not tool) (memex-view--source-mark entry))))
+     (if mark
          (propertize (car mark)
                      'face (list 'memex-view-source-glyph (cdr mark)))
        (propertize (if tool (alist-get state memex-view--glyphs "·") "●")
@@ -400,7 +401,7 @@ call took and what it is called trail behind marked as detail, which
                                (_ 'shadow))
                            face)))
      " "
-     (propertize label 'face face)
+     (propertize label 'face (if mark (cdr mark) face))
      (make-string (max 1 (- memex-view-label-width (string-width label))) ?\s)
      (if-let* ((clock (and memex-view-heading-clock
                            (memex-view--clock (alist-get 'ts call)))))

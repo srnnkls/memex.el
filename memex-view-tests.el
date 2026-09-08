@@ -1185,6 +1185,23 @@ an entry the reader cannot see."
                               (ground "second line of beta"))))))
     (memex-view-tests--cleanup)))
 
+(ert-deftest memex-view-heads-an-agent-turn-in-its-own-colour ()
+  "The mark and the name beside it say the same thing, so they say it
+in the same colour."
+  (skip-unless (featurep 'magit-section))
+  (unwind-protect
+      (let ((buffer (memex-view-tests--open
+                     (memex-view-tests--records "claude")
+                     memex-view-tests--session-id
+                     memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (should (re-search-forward "claude" nil t))
+          (should (memq 'memex-view-source-claude
+                        (ensure-list (get-text-property (match-beginning 0)
+                                                        'face))))))
+    (memex-view-tests--cleanup)))
+
 (ert-deftest memex-view-brings-a-hit-out-of-whatever-is-folded-over-it ()
   "Most of a transcript is folded or filtered by the time a hit is
 searched for, and a hit the reader cannot see is worth nothing."
