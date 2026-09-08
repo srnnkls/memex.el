@@ -173,6 +173,24 @@ line of a session."
 An alist of the same shape as `memex-view-initial-states', which is
 what it starts as and what `memex-view-filter' changes.")
 
+(defcustom memex-view-chunk-size 200
+  "Records a transcript renders in one go.
+The first chunk is drawn before the buffer is shown and the rest follow
+while Emacs is idle, so a long session opens at the speed of its head."
+  :type 'natnum
+  :group 'memex)
+
+(defcustom memex-view-fill-delay 0.05
+  "Seconds of idle time between the chunks of a transcript."
+  :type 'number
+  :group 'memex)
+
+(defvar-local memex-view--pending nil
+  "The entries and texts this buffer has still to draw, as (ENTRIES . TEXTS).")
+
+(defvar-local memex-view--fill-timer nil
+  "The timer drawing what is left of this buffer's transcript.")
+
 (defvar-local memex-view-session-id nil
   "The `session_id' of the session this buffer renders.")
 
@@ -590,15 +608,19 @@ dropping it would unfold every section in the buffer."
   (pcase-dolist (`(,kind . ,state) memex-view-states)
     (when (eq state 'hide) (add-to-invisibility-spec kind))))
 
+(defun memex-view--fold (sections)
+  "Fold each of SECTIONS to the state its kind is in."
+  (dolist (section sections)
+    (if (eq (memex-view--state (memex-entry-kind (oref section value))) 'show)
+        (magit-section-show section)
+      (magit-section-hide section))))
+
 (defun memex-view--apply-states ()
   "Fold every record of the transcript to the state its kind is in."
   (memex-view--filter-spec)
   (when magit-root-section
     (oset magit-root-section hidden nil)
-    (dolist (section (oref magit-root-section children))
-      (if (eq (memex-view--state (memex-entry-kind (oref section value))) 'show)
-          (magit-section-show section)
-        (magit-section-hide section))))
+    (memex-view--fold (oref magit-root-section children)))
   (force-mode-line-update))
 
 (defun memex-view--set-state (kind state)
@@ -893,9 +915,12 @@ CHANGE is `next-single-property-change' or
     position))
 
 (defun memex-view--record-position (doc-id)
-  "Return the start of the region rendering the record DOC-ID, or nil."
+  "Return the start of the region rendering the record DOC-ID, or nil.
+A record still queued behind the chunks being drawn is drawn first."
   (let ((position (point-min))
         (found nil))
+    (when (car memex-view--pending)
+      (memex-view--fill-completely))
     (while (and position (not found))
       (let ((record (get-text-property position 'memex-record)))
         (if (equal (alist-get 'doc_id record) doc-id)
@@ -1030,6 +1055,8 @@ that process is what `memex-cancel-rpc' takes."
   (setq-local memex-view-states (copy-alist memex-view-initial-states))
   (setq-local memex-view-details (default-value 'memex-view-details))
   (memex-view--filter-spec)
+  (setq-local bidi-paragraph-direction 'left-to-right)
+  (setq-local bidi-inhibit-bpa t)
   ;; so-long answers the long lines of minified output and base64 by
   ;; stripping this mode's keymap and fontification off the buffer.
   (setq-local so-long-predicate #'ignore))
@@ -1056,6 +1083,56 @@ buffer the user is in and erase it."
                             source-path)))
               (buffer-list))))
 
+(defun memex-view--cancel-fill ()
+  "Stop drawing what is left of this buffer's transcript."
+  (when (timerp memex-view--fill-timer)
+    (cancel-timer memex-view--fill-timer))
+  (setq-local memex-view--fill-timer nil)
+  (setq-local memex-view--pending nil))
+
+(defun memex-view--schedule-fill ()
+  "Draw the next chunk of this buffer's transcript once Emacs is idle."
+  (when (and (car memex-view--pending) (not memex-view--fill-timer))
+    (setq-local memex-view--fill-timer
+                (run-with-idle-timer memex-view-fill-delay nil
+                                     #'memex-view--fill (current-buffer)))))
+
+(defun memex-view--fill-chunk ()
+  "Draw the next chunk into the transcript, and return what is left."
+  (pcase-let ((`(,entries . ,texts) memex-view--pending))
+    (when entries
+      (let* ((inhibit-read-only t)
+             (root magit-root-section)
+             (drawn (length (oref root children)))
+             (take (min memex-view-chunk-size (length entries)))
+             (memex-entry--fields-cache (make-hash-table :test #'eq))
+             (magit-insert-section--parent root)
+             (magit-insert-section--current root))
+        (save-excursion
+          (goto-char (point-max))
+          (seq-mapn #'memex-view--insert-record
+                    (seq-take entries take) (seq-take texts take))
+          (set-marker (oref root end) (point-max)))
+        (setq-local memex-view--pending
+                    (cons (nthcdr take entries) (nthcdr take texts)))
+        (memex-view--fold (nthcdr drawn (oref root children)))
+        (force-mode-line-update)
+        (set-buffer-modified-p nil))))
+  (car memex-view--pending))
+
+(defun memex-view--fill (buffer)
+  "Draw the next chunk of BUFFER's transcript, and queue the one after it."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (setq-local memex-view--fill-timer nil)
+      (memex-view--fill-chunk)
+      (memex-view--schedule-fill))))
+
+(defun memex-view--fill-completely ()
+  "Draw whatever is left of this buffer's transcript now."
+  (while (memex-view--fill-chunk))
+  (memex-view--cancel-fill))
+
 (defun memex-view--render (buffer context session-id source-path)
   "Render CONTEXT into BUFFER as the session SESSION-ID at SOURCE-PATH.
 CONTEXT is the session context `memex-api-session' answers with.
@@ -1072,15 +1149,21 @@ one session shares it."
       (setq-local memex-view-session-id session-id)
       (setq-local memex-view-source-path source-path)
       (setq-local memex-view-source (alist-get 'source (car records)))
+      (memex-view--cancel-fill)
       (let* ((entries (memex-entry-pair records))
              (memex-entry--fields-cache (make-hash-table :test #'eq))
              (texts (memex-view--texts (mapcar #'memex-entry-call entries)))
+             (shown (min (length entries) memex-view-chunk-size))
              (magit-insert-section--parent nil))
         (magit-insert-section (memex-view-transcript-section session-id)
-          (seq-mapn #'memex-view--insert-record entries texts))
+          (seq-mapn #'memex-view--insert-record
+                    (seq-take entries shown) (seq-take texts shown)))
+        (setq-local memex-view--pending
+                    (cons (nthcdr shown entries) (nthcdr shown texts)))
         (memex-view--apply-states))
       (set-buffer-modified-p nil)
-      (goto-char (point-min)))))
+      (goto-char (point-min))
+      (memex-view--schedule-fill))))
 
 ;;;###autoload
 (defun memex-view-session (session-id source-path &optional doc-id display)

@@ -304,6 +304,41 @@ finds it."
            records)))
     (memex-view-tests--cleanup)))
 
+(ert-deftest memex-view-draws-the-head-of-a-session-before-the-rest ()
+  (unwind-protect
+      (let* ((memex-view-chunk-size 2)
+             (records (memex-view-tests--records))
+             (buffer (memex-view-tests--open records
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (should (= (length (oref magit-root-section children)) 2))
+          (should (car memex-view--pending))
+          (memex-view--fill buffer)
+          (should (= (length (oref magit-root-section children)) 4))
+          (should-not (car memex-view--pending))
+          (should (= (marker-position (oref magit-root-section end))
+                     (point-max)))
+          (memex-view-toggle-tool-content)
+          (should (equal (memex-view-tests--rendered-records) records))
+          (dolist (token '("alpha question" "beta answer" "gamma-output-token"
+                           "delta follow-up"))
+            (should (memex-view-tests--position-of token)))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-draws-a-record-a-jump-asks-for-before-finding-it ()
+  (unwind-protect
+      (let* ((memex-view-chunk-size 1)
+             (records (memex-view-tests--records))
+             (buffer (memex-view-tests--open records
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (should (= (length (oref magit-root-section children)) 1))
+          (should (memex-view--record-position 8804))
+          (should-not (car memex-view--pending))))
+    (memex-view-tests--cleanup)))
+
 (ert-deftest memex-view-keys-the-buffer-on-the-session-id-and-source-path ()
   (unwind-protect
       (let* ((records (memex-view-tests--records))
