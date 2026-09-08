@@ -63,9 +63,10 @@ resumed, since it is the only filter `memex sessions' offers."
 (defcustom memex-herdr-display-action
   '((display-buffer-reuse-window display-buffer-same-window))
   "How the bridge shows the viewer it opens from a herdr terminal.
-The default takes over the window the terminal was in, which
-`display-buffer' records as a window the viewer borrowed, so quitting
-the viewer gives the terminal its window back."
+A rule in `display-buffer-alist' outranks this, so a popup framework
+decides where the viewer goes wherever it has an opinion.  The default
+takes over the window the terminal was in, which `display-buffer'
+records as borrowed, so quitting gives the terminal its window back."
   :type 'sexp
   :group 'memex)
 
@@ -79,11 +80,12 @@ pinned is followed to its own.  Following is idempotent and so is the
         (when (fboundp '+ws-pin-follow) (+ws-pin-follow buffer))
       (when (fboundp '+ws-pin-buffer) (+ws-pin-buffer buffer))))
   (let ((window (selected-window)))
-    (when (and (window-live-p window)
-               (window-dedicated-p window)
-               (not (eq (window-buffer window) buffer)))
-      (set-window-dedicated-p window nil))
-    (display-buffer buffer memex-herdr-display-action)))
+    (if (or (window-minibuffer-p window) (eq (window-buffer window) buffer))
+        (display-buffer buffer memex-herdr-display-action)
+      (display-buffer-record-window 'reuse window buffer)
+      (set-window-dedicated-p window nil)
+      (set-window-buffer window buffer)
+      window)))
 
 ;;;###autoload
 (defun memex-herdr-open-session (session-id source-path &optional doc-id)
