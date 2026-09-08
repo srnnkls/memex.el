@@ -174,9 +174,7 @@ An alist of the same shape as `memex-view-initial-states', which is
 what it starts as and what `memex-view-filter' changes.")
 
 (defcustom memex-view-chunk-size 200
-  "Records a transcript renders in one go.
-The first chunk is drawn before the buffer is shown and the rest follow
-while Emacs is idle, so a long session opens at the speed of its head."
+  "Entries rendered per chunk, newest chunk first."
   :type 'natnum
   :group 'memex)
 
@@ -189,7 +187,7 @@ while Emacs is idle, so a long session opens at the speed of its head."
   "How many entries of this buffer's transcript reported something wrong.")
 
 (defvar-local memex-view--pending nil
-  "The entries and texts this buffer has still to draw, as (ENTRIES . TEXTS).")
+  "Pending entries and texts, both newest first, as (ENTRIES . TEXTS).")
 
 (defvar-local memex-view--fill-timer nil
   "The timer drawing what is left of this buffer's transcript.")
@@ -318,15 +316,70 @@ line as detail does not cost it the faces it was drawn with."
     marked))
 
 (defconst memex-view--glyphs
-  '((ok . "✔") (warn . "▲") (pending . "◌"))
-  "What each outcome of a call is drawn as.")
+  '((ok . "○") (warn . "▲") (pending . "○"))
+  "What each outcome of a call is drawn as.
+A call is drawn hollow, so a turn someone took reads as the solid one;
+only a call that reported trouble takes a shape of its own.")
+
+(defface memex-view-source-claude
+  '((((class color) (min-colors 88)) :foreground "#d97757")
+    (t :inherit warning))
+  "Face for the mark beside a turn Claude Code wrote."
+  :group 'memex)
+
+(defface memex-view-source-codex
+  '((((background dark)) :foreground "white")
+    (((background light)) :foreground "black")
+    (t :inherit default))
+  "Face for the mark beside a turn Codex wrote."
+  :group 'memex)
+
+(defface memex-view-source-glyph '((t :height 1.3))
+  "Face lending the vendor marks their size, over their own colour."
+  :group 'memex)
+
+(defcustom memex-view-source-marks
+  '(("claude" "✳" . memex-view-source-claude)
+    ("codex" "⌬" . memex-view-source-codex))
+  "Marks drawn before the name of the agent a turn was written by.
+Each entry gives the glyph and the face it is drawn in, keyed by the
+source memex recorded the session under.  A source without an entry is
+drawn blank, so the names stay in the same column either way."
+  :type '(alist :key-type string
+                :value-type (cons (string :tag "Glyph") (face :tag "Face")))
+  :group 'memex)
+
+(defcustom memex-view-heading-clock t
+  "Whether every heading says the time of day its entry was recorded."
+  :type 'boolean
+  :group 'memex)
+
+(defcustom memex-view-message-padding 3
+  "Pixels between the left edge of the window and every entry of a transcript.
+Zero draws each entry flush against the edge.  Terminal frames measure
+in whole columns and ignore this."
+  :type 'natnum
+  :group 'memex)
+
+(defcustom memex-view-heading-indent 1
+  "Columns between magit's fold indicator and the glyph of a heading."
+  :type 'natnum
+  :group 'memex)
+
+(defun memex-view--source-mark (entry)
+  "Return the glyph and face marking the agent that wrote ENTRY, or nil.
+Only the agent's own turns carry it: a person's turn is the reader's and
+a call is the tool's."
+  (when (eq (memex-entry-kind entry) 'assistant)
+    (cdr (assoc (alist-get 'source (memex-entry-call entry))
+                memex-view-source-marks))))
 
 (defun memex-view--header (entry label face &optional description)
   "Return the line ENTRY is headed with: its glyph, LABEL and DESCRIPTION.
 LABEL is drawn in FACE and padded to `memex-view-label-width', so a run
 of entries reads down a column rather than as a paragraph.  What the
-call took, when it ran and what it is called trail behind marked as
-detail, which `memex-view-toggle-details' shows and hides."
+call took and what it is called trail behind marked as detail, which
+`memex-view-toggle-details' shows and hides."
   (pcase-let* ((`(,state . ,reason) (memex-entry-status entry))
                (_ (when (eq state 'warn)
                     (setq memex-view--problems (1+ memex-view--problems))))
@@ -335,17 +388,24 @@ detail, which `memex-view-toggle-details' shows and hides."
                (took (memex-entry-duration entry))
                (doc-id (alist-get 'doc_id call)))
     (concat
-     (propertize (if tool (alist-get state memex-view--glyphs "·") "●")
-                 'face (list (if tool
-                                (pcase state
-                                  ('warn 'memex-view-warning)
-                                  ('ok 'memex-view-ok)
-                                  (_ 'shadow))
-                              face)
-                            'memex-view-glyph))
+     (make-string memex-view-heading-indent ?\s)
+     (if-let* ((mark (and (not tool) (memex-view--source-mark entry))))
+         (propertize (car mark)
+                     'face (list 'memex-view-source-glyph (cdr mark)))
+       (propertize (if tool (alist-get state memex-view--glyphs "·") "●")
+                   'face (if tool
+                             (pcase state
+                               ('warn 'memex-view-warning)
+                               ('ok 'memex-view-ok)
+                               (_ 'shadow))
+                           face)))
      " "
      (propertize label 'face face)
      (make-string (max 1 (- memex-view-label-width (string-width label))) ?\s)
+     (if-let* ((clock (and memex-view-heading-clock
+                           (memex-view--clock (alist-get 'ts call)))))
+         (concat (propertize clock 'face 'shadow) "  ")
+       "")
      (memex-view--join
       (memex-view--summarize description)
       (when reason (propertize (memex-view--summarize reason)
@@ -354,7 +414,6 @@ detail, which `memex-view-toggle-details' shows and hides."
                     (when took (if (< took 1000)
                                    (format "%dms" took)
                                  (format "%.1fs" (/ took 1000.0))))
-                    (memex-view--clock (alist-get 'ts call))
                     (when doc-id (format "#%s" doc-id)))))
        (if (string-empty-p detail)
            ""
@@ -563,12 +622,22 @@ either way."
         (when face (put-text-property position next 'font-lock-face face))
         (setq position next)))))
 
+(defun memex-view--pad (start end)
+  "Set every line between START and END off the left edge by its padding."
+  (when (> memex-view-message-padding 0)
+    (let ((prefix (propertize
+                   " " 'display
+                   `(space :width (,memex-view-message-padding)))))
+      (put-text-property start end 'line-prefix prefix)
+      (put-text-property start end 'wrap-prefix prefix))))
+
 (defun memex-view--dress (start end entry)
   "Claim START to END for ENTRY, lay its ground and keep its faces.
 Washed-in text is dressed the same way as text the renderer wrote: it
 belongs to the same entry and sits on the same ground, and it did not
 exist when that ground was laid."
   (memex-view--claim start end entry)
+  (memex-view--pad start end)
   (when-let* ((face (alist-get (memex-entry-kind entry)
                                memex-view--kind-faces)))
     (add-face-text-property start end face t))
@@ -1045,7 +1114,13 @@ that process is what `memex-cancel-rpc' takes."
   "w" #'memex-view-copy-command
   "RET" #'memex-view-visit-payload
   "M-e" #'memex-view-previous-problem
-  "s" #'memex-view-search-in-session)
+  "s" #'memex-view-search-in-session
+  "q" #'memex-view-quit)
+
+(defun memex-view-quit ()
+  "Bury the transcript, leaving the window it was read in where it was."
+  (interactive)
+  (quit-restore-window nil 'bury))
 
 (define-derived-mode memex-session-mode magit-section-mode "Memex Session"
   "Major mode for a memex session transcript.
@@ -1095,38 +1170,77 @@ buffer the user is in and erase it."
   "Draw the next chunk of this buffer's transcript once Emacs is idle."
   (when (and (car memex-view--pending) (not memex-view--fill-timer))
     (setq-local memex-view--fill-timer
-                (run-with-idle-timer memex-view-fill-delay nil
-                                     #'memex-view--fill (current-buffer)))))
+                (run-with-idle-timer
+                 (+ memex-view-fill-delay
+                    (if-let* ((idle (current-idle-time))) (float-time idle) 0))
+                 nil #'memex-view--fill (current-buffer)))))
 
 (defun memex-view--fill-chunk ()
-  "Draw the next chunk into the transcript, and return what is left."
+  "Prepend the next older chunk and return the entries still pending."
   (pcase-let ((`(,entries . ,texts) memex-view--pending))
     (when entries
       (let* ((inhibit-read-only t)
              (root magit-root-section)
-             (drawn (length (oref root children)))
-             (take (min memex-view-chunk-size (length entries)))
+             (children (oref root children))
+             (take (min (max 1 memex-view-chunk-size) (length entries)))
+             (position (copy-marker (point) t))
+             (windows (mapcar
+                       (lambda (window)
+                         (list window (copy-marker (window-start window) t)
+                               (copy-marker (window-point window) t)
+                               (window-vscroll window t)))
+                       (get-buffer-window-list (current-buffer) nil t)))
              (memex-entry--fields-cache (make-hash-table :test #'eq))
              (magit-insert-section--parent root)
-             (magit-insert-section--current root))
-        (save-excursion
-          (goto-char (point-max))
-          (seq-mapn #'memex-view--insert-record
-                    (seq-take entries take) (seq-take texts take))
-          (set-marker (oref root end) (point-max)))
-        (setq-local memex-view--pending
-                    (cons (nthcdr take entries) (nthcdr take texts)))
-        (memex-view--fold (nthcdr drawn (oref root children)))
-        (force-mode-line-update)
-        (set-buffer-modified-p nil))))
+             (magit-insert-section--current root)
+             (magit-insert-section--oldroot nil))
+        (unwind-protect
+            (progn
+              (oset root children nil)
+              (goto-char (point-min))
+              (seq-mapn #'memex-view--insert-record
+                        (nreverse (seq-take entries take))
+                        (nreverse (seq-take texts take)))
+              (memex-view--fold (oref root children))
+              (setq-local memex-view--pending
+                          (cons (nthcdr take entries) (nthcdr take texts)))
+              (set-buffer-modified-p nil)
+              (force-mode-line-update))
+          (oset root children (nconc (oref root children) children))
+          (set-marker (oref root start) (point-min))
+          (set-marker (oref root end) (point-max))
+          (goto-char position)
+          (set-marker position nil)
+          (pcase-dolist (`(,window ,start ,point ,vscroll) windows)
+            (when (and (window-live-p window)
+                       (eq (window-buffer window) (current-buffer)))
+              (set-window-start window start t)
+              (set-window-point window point)
+              (set-window-vscroll window vscroll t))
+            (set-marker start nil)
+            (set-marker point nil))))))
   (car memex-view--pending))
+
+(defun memex-view-follow-end ()
+  "Move to the last visible record's heading."
+  (interactive)
+  (when-let* ((section
+               (seq-find (lambda (section)
+                           (not (eq (memex-view--state
+                                     (memex-entry-kind (oref section value)))
+                                    'hide)))
+                         (reverse (oref magit-root-section children)))))
+    (magit-section-goto section)))
 
 (defun memex-view--fill (buffer)
   "Draw the next chunk of BUFFER's transcript, and queue the one after it."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (setq-local memex-view--fill-timer nil)
-      (memex-view--fill-chunk)
+      (when (timerp memex-view--fill-timer)
+        (cancel-timer memex-view--fill-timer))
+      (unwind-protect
+          (memex-view--fill-chunk)
+        (setq-local memex-view--fill-timer nil))
       (memex-view--schedule-fill))))
 
 (defun memex-view--fill-completely ()
@@ -1145,23 +1259,25 @@ one session shares it."
   (with-current-buffer buffer
     (let ((records (alist-get 'records context))
           (inhibit-read-only t))
+      (memex-view--cancel-fill)
       (memex-session-mode)
+      (add-hook 'kill-buffer-hook #'memex-view--cancel-fill nil t)
       (erase-buffer)
       (setq-local memex-view-session-id session-id)
       (setq-local memex-view-source-path source-path)
       (setq-local memex-view-source (alist-get 'source (car records)))
       (setq-local memex-view--problems 0)
-      (memex-view--cancel-fill)
       (let* ((entries (memex-entry-pair records))
              (memex-entry--fields-cache (make-hash-table :test #'eq))
              (texts (memex-view--texts (mapcar #'memex-entry-call entries)))
-             (shown (min (length entries) memex-view-chunk-size))
+             (older (max 0 (- (length entries) (max 1 memex-view-chunk-size))))
              (magit-insert-section--parent nil))
         (magit-insert-section (memex-view-transcript-section session-id)
           (seq-mapn #'memex-view--insert-record
-                    (seq-take entries shown) (seq-take texts shown)))
+                    (nthcdr older entries) (nthcdr older texts)))
         (setq-local memex-view--pending
-                    (cons (nthcdr shown entries) (nthcdr shown texts)))
+                    (cons (nreverse (seq-take entries older))
+                          (nreverse (seq-take texts older))))
         (memex-view--apply-states))
       (set-buffer-modified-p nil)
       (goto-char (point-min))
@@ -1171,7 +1287,7 @@ one session shares it."
 (defun memex-view-session (session-id source-path &optional doc-id display)
   "Show the whole session SESSION-ID at SOURCE-PATH and return its process.
 The session is fetched in one request and rendered whole.  Point lands
-on the record DOC-ID, or at the start of the transcript without one.  A
+on the record DOC-ID, or the last visible record's heading without one.  A
 session already open is rendered into the buffer it is open in.
 DISPLAY is called with the rendered buffer; without one the buffer goes
 up under `memex-view-display-action'.  That seam is how the herdr bridge
@@ -1190,9 +1306,9 @@ puts the viewer in the workspace the session is pinned to."
            (funcall display buffer)
          (display-buffer buffer memex-view-display-action))
        (with-current-buffer buffer
-         (memex-view--goto-position
-          (or (and doc-id (memex-view--record-position doc-id))
-              (point-min))))))))
+         (if-let* ((position (and doc-id (memex-view--record-position doc-id))))
+             (memex-view--goto-position position)
+           (memex-view-follow-end)))))))
 
 (provide 'memex-view)
 ;;; memex-view.el ends here

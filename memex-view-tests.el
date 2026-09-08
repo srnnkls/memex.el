@@ -304,7 +304,7 @@ finds it."
            records)))
     (memex-view-tests--cleanup)))
 
-(ert-deftest memex-view-draws-the-head-of-a-session-before-the-rest ()
+(ert-deftest memex-view-draws-the-tail-of-a-session-before-the-rest ()
   (unwind-protect
       (let* ((memex-view-chunk-size 2)
              (records (memex-view-tests--records))
@@ -313,6 +313,7 @@ finds it."
                                              memex-view-tests--source-path)))
         (with-current-buffer buffer
           (should (= (length (oref magit-root-section children)) 2))
+          (should (equal (memex-view-tests--rendered-records) (nthcdr 2 records)))
           (should (car memex-view--pending))
           (memex-view--fill buffer)
           (should (= (length (oref magit-root-section children)) 4))
@@ -325,6 +326,149 @@ finds it."
                            "delta follow-up"))
             (should (memex-view-tests--position-of token)))))
     (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-quit-keeps-the-window-it-was-read-in ()
+  (let ((other (generate-new-buffer "*memex view tests other*")))
+    (unwind-protect
+        (let ((buffer (memex-view-tests--open
+                       (memex-view-tests--records)
+                       memex-view-tests--session-id
+                       memex-view-tests--source-path)))
+          (set-window-buffer (selected-window) other)
+          (display-buffer buffer '(display-buffer-same-window))
+          (set-window-dedicated-p (selected-window) t)
+          (with-current-buffer buffer (memex-view-quit))
+          (should (window-live-p (selected-window)))
+          (should (eq (window-buffer (selected-window)) other)))
+      (kill-buffer other)
+      (memex-view-tests--cleanup))))
+
+(ert-deftest memex-view-prepends-history-without-moving-the-reader ()
+  (save-window-excursion
+    (unwind-protect
+        (let* ((memex-view-chunk-size 1)
+               (records (memex-view-tests--records))
+               (buffer (memex-view-tests--open records
+                                               memex-view-tests--session-id
+                                               memex-view-tests--source-path)))
+          (switch-to-buffer buffer)
+          (let ((window (selected-window)))
+            (set-window-start window (point-min))
+            (should (equal (memex-view-record-at-point) (car (last records))))
+            (memex-view--fill buffer)
+            (should (equal (memex-view-record-at-point) (car (last records))))
+            (should (= (window-start window) (point)))
+            (should (eq (magit-current-section)
+                        (car (last (oref magit-root-section children)))))
+            (goto-char (point-min))
+            (let ((record (memex-view-record-at-point)))
+              (set-window-start window (point))
+              (memex-view--fill buffer)
+              (should (equal (memex-view-record-at-point) record))
+              (should (= (window-start window) (point))))
+            (memex-view--fill-completely)
+            (should (equal (memex-view-tests--rendered-records) records))
+            (should (= (marker-position (oref magit-root-section start)) 1))
+            (should (= (marker-position (oref magit-root-section end))
+                       (point-max)))))
+      (memex-view-tests--cleanup))))
+
+(ert-deftest memex-view-prepending-preserves-existing-folds ()
+  (unwind-protect
+      (let* ((memex-view-chunk-size 2)
+             (buffer (memex-view-tests--open
+                      (memex-view-tests--records)
+                      memex-view-tests--session-id
+                      memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (let ((section (car (last (oref magit-root-section children)))))
+            (magit-section-hide section)
+            (memex-view--fill-completely)
+            (should (oref section hidden))
+            (should (invisible-p (oref section content)))
+            (should (eq section (car (last (oref magit-root-section children)))))
+            (magit-section-show section)
+            (should-not (invisible-p (oref section content))))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-reopening-and-killing-cancel-pending-fill ()
+  (unwind-protect
+      (let* ((memex-view-chunk-size 1)
+             (records (memex-view-tests--records))
+             (buffer (memex-view-tests--open records
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (let ((timer memex-view--fill-timer))
+            (should (memq timer timer-idle-list))
+            (memex-view--render buffer (memex-view-tests--context records)
+                                memex-view-tests--session-id
+                                memex-view-tests--source-path)
+            (should-not (memq timer timer-idle-list)))
+          (let ((timer memex-view--fill-timer))
+            (kill-buffer buffer)
+            (should-not (memq timer timer-idle-list)))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-heads-a-turn-with-its-source-and-its-clock ()
+  (unwind-protect
+      (let* ((records (memex-view-tests--records))
+             (buffer (memex-view-tests--open records
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path))
+             (clock (format-time-string "%T" (/ 1787671116244 1000))))
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (should (search-forward "⌬ codex" nil t))
+          (should (memq 'memex-view-source-codex
+                        (ensure-list
+                         (get-text-property (match-beginning 0) 'face))))
+          (should (string-search clock (thing-at-point 'line t)))
+          (goto-char (point-min))
+          (should (search-forward "● you" nil t))
+          (should-not (string-search "⌬" (thing-at-point 'line t)))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-sets-every-entry-off-the-left-edge ()
+  (unwind-protect
+      (let ((buffer (memex-view-tests--open
+                     (memex-view-tests--records)
+                     memex-view-tests--session-id
+                     memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (dolist (token '("alpha question" "beta answer" "delta follow-up"))
+            (let* ((position (memex-view-tests--position-of token))
+                   (prefix (get-text-property position 'line-prefix)))
+              (should (equal (get-text-property 0 'display prefix)
+                             `(space :width (,memex-view-message-padding))))
+              (should (equal (get-text-property position 'wrap-prefix)
+                             prefix))))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-draws-flush-when-the-padding-is-off ()
+  (let ((memex-view-message-padding 0))
+    (unwind-protect
+        (let ((buffer (memex-view-tests--open
+                       (memex-view-tests--records)
+                       memex-view-tests--session-id
+                       memex-view-tests--source-path)))
+          (with-current-buffer buffer
+            (should-not (get-text-property
+                         (memex-view-tests--position-of "alpha question")
+                         'line-prefix))))
+      (memex-view-tests--cleanup))))
+
+(ert-deftest memex-view-leaves-the-clock-out-when-it-is-turned-off ()
+  (let ((memex-view-heading-clock nil))
+    (unwind-protect
+        (let ((buffer (memex-view-tests--open
+                       (memex-view-tests--records)
+                       memex-view-tests--session-id
+                       memex-view-tests--source-path))
+              (clock (format-time-string "%T" (/ 1787671116244 1000))))
+          (with-current-buffer buffer
+            (should-not (memex-view-tests--position-of clock))))
+      (memex-view-tests--cleanup))))
 
 (ert-deftest memex-view-counts-the-failures-as-it-draws-them ()
   (unwind-protect
