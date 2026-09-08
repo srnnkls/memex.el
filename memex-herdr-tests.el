@@ -556,6 +556,24 @@ as many answers as it is about."
              ,@body))
        (kill-buffer buffer))))
 
+(ert-deftest memex-herdr-gives-back-a-window-it-only-borrowed ()
+  (let ((terminal (generate-new-buffer "*memex herdr tests terminal*"))
+        (viewer (generate-new-buffer "*memex herdr tests viewer*")))
+    (unwind-protect
+        (progn
+          (set-window-buffer (selected-window) terminal)
+          (memex-herdr--display viewer)
+          (should (eq (window-buffer (selected-window)) viewer))
+          (pcase-let ((`(,type ,previous . ,_)
+                       (window-parameter (selected-window) 'quit-restore)))
+            (should (eq type 'other))
+            (should (eq (car previous) terminal)))
+          (quit-window nil (selected-window))
+          (should (window-live-p (selected-window)))
+          (should (eq (window-buffer (selected-window)) terminal)))
+      (kill-buffer viewer)
+      (kill-buffer terminal))))
+
 (ert-deftest memex-herdr-keeps-the-shell-outs-diagnostics-out-of-its-json ()
   (let (destination)
     (cl-letf (((symbol-function 'call-process)

@@ -60,6 +60,15 @@ resumed, since it is the only filter `memex sessions' offers."
   :type 'natnum
   :group 'memex)
 
+(defcustom memex-herdr-display-action
+  '((display-buffer-reuse-window display-buffer-same-window))
+  "How the bridge shows the viewer it opens from a herdr terminal.
+The default takes over the window the terminal was in, which
+`display-buffer' records as a window the viewer borrowed, so quitting
+the viewer gives the terminal its window back."
+  :type 'sexp
+  :group 'memex)
+
 (defun memex-herdr--display (buffer)
   "Show BUFFER in the workspace it belongs to.
 An unpinned buffer is pinned to the current workspace and one already
@@ -69,7 +78,7 @@ pinned is followed to its own.  Following is idempotent and so is the
     (if (+ws-pin-of buffer)
         (when (fboundp '+ws-pin-follow) (+ws-pin-follow buffer))
       (when (fboundp '+ws-pin-buffer) (+ws-pin-buffer buffer))))
-  (display-buffer buffer))
+  (display-buffer buffer memex-herdr-display-action))
 
 ;;;###autoload
 (defun memex-herdr-open-session (session-id source-path &optional doc-id)
