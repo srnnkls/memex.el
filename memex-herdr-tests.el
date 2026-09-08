@@ -556,6 +556,16 @@ as many answers as it is about."
              ,@body))
        (kill-buffer buffer))))
 
+(ert-deftest memex-herdr-keeps-the-shell-outs-diagnostics-out-of-its-json ()
+  (let (destination)
+    (cl-letf (((symbol-function 'call-process)
+               (lambda (_program &optional _infile target &rest _)
+                 (setq destination target)
+                 (insert "[]")
+                 0)))
+      (memex-herdr--sessions)
+      (should (equal destination '(t nil))))))
+
 (ert-deftest memex-herdr-open-agent-session-views-the-session-herdr-reports-by-id ()
   (memex-herdr-tests--attached
       (memex-herdr-tests--agent

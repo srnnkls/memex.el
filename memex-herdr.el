@@ -108,7 +108,7 @@ which every caller reports as the session it could not find."
       (with-temp-buffer
         (let ((default-directory temporary-file-directory))
           (when (eq 0 (apply #'call-process
-                             memex-executable nil t nil
+                             memex-executable nil '(t nil) nil
                              "sessions" "--json-array"
                              (append filters
                                      (list "--limit"
