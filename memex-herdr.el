@@ -78,7 +78,12 @@ pinned is followed to its own.  Following is idempotent and so is the
     (if (+ws-pin-of buffer)
         (when (fboundp '+ws-pin-follow) (+ws-pin-follow buffer))
       (when (fboundp '+ws-pin-buffer) (+ws-pin-buffer buffer))))
-  (display-buffer buffer memex-herdr-display-action))
+  (let ((window (selected-window)))
+    (when (and (window-live-p window)
+               (window-dedicated-p window)
+               (not (eq (window-buffer window) buffer)))
+      (set-window-dedicated-p window nil))
+    (display-buffer buffer memex-herdr-display-action)))
 
 ;;;###autoload
 (defun memex-herdr-open-session (session-id source-path &optional doc-id)

@@ -574,6 +574,22 @@ as many answers as it is about."
       (kill-buffer viewer)
       (kill-buffer terminal))))
 
+(ert-deftest memex-herdr-gives-back-a-window-herdr-had-dedicated ()
+  (let ((terminal (generate-new-buffer "*memex herdr tests dedicated*"))
+        (viewer (generate-new-buffer "*memex herdr tests viewer*")))
+    (unwind-protect
+        (progn
+          (set-window-buffer (selected-window) terminal)
+          (set-window-dedicated-p (selected-window) t)
+          (memex-herdr--display viewer)
+          (should (eq (window-buffer (selected-window)) viewer))
+          (should-not (window-dedicated-p (selected-window)))
+          (quit-window nil (selected-window))
+          (should (window-live-p (selected-window)))
+          (should (eq (window-buffer (selected-window)) terminal)))
+      (kill-buffer viewer)
+      (kill-buffer terminal))))
+
 (ert-deftest memex-herdr-keeps-the-shell-outs-diagnostics-out-of-its-json ()
   (let (destination)
     (cl-letf (((symbol-function 'call-process)
