@@ -185,6 +185,9 @@ while Emacs is idle, so a long session opens at the speed of its head."
   :type 'number
   :group 'memex)
 
+(defvar-local memex-view--problems 0
+  "How many entries of this buffer's transcript reported something wrong.")
+
 (defvar-local memex-view--pending nil
   "The entries and texts this buffer has still to draw, as (ENTRIES . TEXTS).")
 
@@ -325,6 +328,8 @@ of entries reads down a column rather than as a paragraph.  What the
 call took, when it ran and what it is called trail behind marked as
 detail, which `memex-view-toggle-details' shows and hides."
   (pcase-let* ((`(,state . ,reason) (memex-entry-status entry))
+               (_ (when (eq state 'warn)
+                    (setq memex-view--problems (1+ memex-view--problems))))
                (call (memex-entry-call entry))
                (tool (memex-entry-tool entry))
                (took (memex-entry-duration entry))
@@ -864,12 +869,7 @@ entry is at the top of the window: the fold markers already say that."
                       (oref magit-root-section children))))
     (if (null entries)
         (or memex-view-session-id "")
-      (let ((problems (seq-count (lambda (section)
-                                   (eq (car (memex-entry-status
-                                             (oref section value)))
-                                       'warn))
-                                 entries))
-            (from (memex-view--clock
+      (let ((from (memex-view--clock
                    (alist-get 'ts (memex-entry-call (oref (car entries) value)))))
             (to (memex-view--clock
                  (alist-get 'ts (memex-entry-call
@@ -877,8 +877,9 @@ entry is at the top of the window: the fold markers already say that."
         (memex-view--join
          (alist-get 'project (memex-entry-call (oref (car entries) value)))
          (format "%d entries" (length entries))
-         (when (> problems 0)
-           (propertize (format "%d err" problems) 'face 'memex-view-warning))
+         (when (> memex-view--problems 0)
+           (propertize (format "%d err" memex-view--problems)
+                       'face 'memex-view-warning))
          (and from to (propertize (format "%s-%s" from to) 'face 'shadow))
          (memex-view--states-summary))))))
 
@@ -1149,6 +1150,7 @@ one session shares it."
       (setq-local memex-view-session-id session-id)
       (setq-local memex-view-source-path source-path)
       (setq-local memex-view-source (alist-get 'source (car records)))
+      (setq-local memex-view--problems 0)
       (memex-view--cancel-fill)
       (let* ((entries (memex-entry-pair records))
              (memex-entry--fields-cache (make-hash-table :test #'eq))

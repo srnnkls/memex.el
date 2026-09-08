@@ -326,6 +326,23 @@ finds it."
             (should (memex-view-tests--position-of token)))))
     (memex-view-tests--cleanup)))
 
+(ert-deftest memex-view-counts-the-failures-as-it-draws-them ()
+  (unwind-protect
+      (let* ((memex-view-chunk-size 1)
+             (records (memex-view-tests--records))
+             (buffer (memex-view-tests--open records
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (memex-view--fill-completely)
+          (should (= memex-view--problems
+                     (seq-count (lambda (section)
+                                  (eq (car (memex-entry-status
+                                            (oref section value)))
+                                      'warn))
+                                (oref magit-root-section children))))))
+    (memex-view-tests--cleanup)))
+
 (ert-deftest memex-view-draws-a-record-a-jump-asks-for-before-finding-it ()
   (unwind-protect
       (let* ((memex-view-chunk-size 1)
