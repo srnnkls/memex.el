@@ -985,6 +985,13 @@ CHANGE is `next-single-property-change' or
       (or (previous-single-property-change position 'memex-record) (point-min))
     position))
 
+(defun memex-view--same-doc-p (one other)
+  "Return non-nil where ONE and OTHER name the same record.
+An id arrives as a number from memex and as a string from a completion
+table, and a hit lost to that difference reads as a search that jumped
+nowhere."
+  (and one other (equal (format "%s" one) (format "%s" other))))
+
 (defun memex-view--record-position (doc-id)
   "Return the start of the region rendering the record DOC-ID, or nil.
 A record still queued behind the chunks being drawn is drawn first."
@@ -994,7 +1001,7 @@ A record still queued behind the chunks being drawn is drawn first."
       (memex-view--fill-completely))
     (while (and position (not found))
       (let ((record (get-text-property position 'memex-record)))
-        (if (equal (alist-get 'doc_id record) doc-id)
+        (if (memex-view--same-doc-p (alist-get 'doc_id record) doc-id)
             (setq found position)
           (setq position (next-single-property-change position 'memex-record)))))
     found))
@@ -1288,7 +1295,9 @@ one session shares it."
 (defun memex-view-session (session-id source-path &optional doc-id display)
   "Show the whole session SESSION-ID at SOURCE-PATH and return its process.
 The session is fetched in one request and rendered whole.  Point lands
-on the record DOC-ID, or the last visible record's heading without one.  A
+on the record DOC-ID, or the last visible record's heading where none
+was asked for; a DOC-ID this session does not render leaves point at the
+top and says so, rather than reading as a jump to the wrong place.  A
 session already open is rendered into the buffer it is open in.
 DISPLAY is called with the rendered buffer; without one the buffer goes
 up under `memex-view-display-action'.  That seam is how the herdr bridge
@@ -1307,9 +1316,13 @@ puts the viewer in the workspace the session is pinned to."
            (funcall display buffer)
          (display-buffer buffer memex-view-display-action))
        (with-current-buffer buffer
-         (if-let* ((position (and doc-id (memex-view--record-position doc-id))))
-             (memex-view--goto-position position)
-           (memex-view-follow-end)))))))
+         (cond ((null doc-id) (memex-view-follow-end))
+               ((memex-view--record-position doc-id)
+                (memex-view--goto-position
+                 (memex-view--record-position doc-id)))
+               (t (goto-char (point-min))
+                  (message "memex: this session renders no record %s"
+                           doc-id))))))))
 
 (provide 'memex-view)
 ;;; memex-view.el ends here

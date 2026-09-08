@@ -623,6 +623,34 @@ finds it."
           (should (memex-view-tests--starts-record-p follow-up))))
     (memex-view-tests--cleanup)))
 
+(ert-deftest memex-view-opens-on-the-record-a-hit-names ()
+  "A search hands the viewer the id of the record it found, and an id
+that arrives as a string is the same record as one that arrives as a
+number."
+  (unwind-protect
+      (let* ((records (memex-view-tests--records))
+             (hit (nth 1 records))
+             (buffer (memex-view-tests--open
+                      records memex-view-tests--session-id
+                      memex-view-tests--source-path
+                      (number-to-string (alist-get 'doc_id hit)))))
+        (with-current-buffer buffer
+          (should (memex-view-tests--starts-record-p hit))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-stays-put-where-a-hit-is-not-in-this-session ()
+  "Landing on the last record of a session that renders the hit nowhere
+reads as a jump to the wrong place, which is worse than no jump."
+  (unwind-protect
+      (let* ((records (memex-view-tests--records))
+             (buffer (memex-view-tests--open records
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path
+                                             404404)))
+        (with-current-buffer buffer
+          (should (= (point) (point-min)))))
+    (memex-view-tests--cleanup)))
+
 (ert-deftest memex-view-search-in-session-narrows-to-this-session-alone ()
   (unwind-protect
       (let* ((records (memex-view-tests--records))
