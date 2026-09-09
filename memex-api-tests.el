@@ -27,6 +27,7 @@
   '(memex-api-ping
     memex-api-search
     memex-api-recent
+    memex-api-sessions
     memex-api-session
     memex-api-show
     memex-api-session-page
@@ -266,7 +267,7 @@ TIMEOUT bounds the wait.  See `memex-api-tests--exchange-with'."
          (lambda (cb eb) (memex-api-session-activity cb :errback eb)))))
 
 (ert-deftest memex-api-defines-a-non-interactive-wrapper-per-operation ()
-  (should (equal (length memex-api-tests--wrappers) 11))
+  (should (equal (length memex-api-tests--wrappers) 12))
   (dolist (wrapper memex-api-tests--wrappers)
     (should (fboundp wrapper))
     (should-not (commandp wrapper))))
@@ -954,6 +955,55 @@ TIMEOUT bounds the wait.  See `memex-api-tests--exchange-with'."
                  (lambda () (or failure (not (eq payload 'pending)))) 60.0))
         (should (equal (list label failure) (list label nil)))
         (should-not (eq payload 'pending))))))
+
+(ert-deftest memex-api-sessions-sends-its-narrowing-fields-even-unset ()
+  "Memex declares cwd, project, source and since without a skip, so a
+request leaving any of them out is refused outright.  They travel as JSON
+null instead, which is why they are not built with `memex-api--fields'."
+  (unwind-protect
+      (let* ((stub (memex-api-tests--recording-stub
+                    (memex-api-tests--response "sessions"
+                                               (cons 'sessions (vector)))))
+             (exchange (memex-api-tests--exchange-with
+                        stub (lambda (cb eb) (memex-api-sessions cb :errback eb))))
+             (request (alist-get 'request (memex-api-tests--sent exchange))))
+        (should-not (plist-get exchange :error))
+        (dolist (field '(cwd project source since))
+          (should (eq :null (alist-get field request))))
+        (should (equal 20 (alist-get 'limit request)))
+        (should-not (alist-get 'session_id request)))
+    (memex-api-tests--cleanup)))
+
+(ert-deftest memex-api-sessions-narrows-by-what-it-was-given ()
+  (unwind-protect
+      (let* ((stub (memex-api-tests--recording-stub
+                    (memex-api-tests--response "sessions"
+                                               (cons 'sessions (vector)))))
+             (exchange (memex-api-tests--exchange-with
+                        stub
+                        (lambda (cb eb)
+                          (memex-api-sessions cb :errback eb
+                                              :session-id "s1"
+                                              :cwd "/tmp/proj"
+                                              :project "memex"
+                                              :source "claude"
+                                              :since "2026-01-01"
+                                              :origin 'all
+                                              :limit 5))))
+             (request (alist-get 'request (memex-api-tests--sent exchange))))
+        (should-not (plist-get exchange :error))
+        (should (equal "s1" (alist-get 'session_id request)))
+        (should (equal "/tmp/proj" (alist-get 'cwd request)))
+        (should (equal "memex" (alist-get 'project request)))
+        (should (equal "claude" (alist-get 'source request)))
+        (should (equal "2026-01-01" (alist-get 'since request)))
+        (should (equal "all" (alist-get 'origin request)))
+        (should (equal 5 (alist-get 'limit request))))
+    (memex-api-tests--cleanup)))
+
+(ert-deftest memex-api-sessions-refuses-a-limit-memex-will-not-serve ()
+  (should-error (memex-api-sessions #'ignore :limit 501)
+                :type 'memex-api-limit-error))
 
 (provide 'memex-api-tests)
 ;;; memex-api-tests.el ends here

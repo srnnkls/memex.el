@@ -183,6 +183,44 @@ LIMIT caps the number of records (20).  PROJECT-GROUPING is `flat' or
                     (cons 'project_grouping project-grouping))
                    callback errback))
 
+(defconst memex-api-max-sessions 500
+  "Most sessions memex lists in one request.")
+
+(cl-defun memex-api-sessions (callback
+                              &key errback session-id source-path
+                              cwd project source since origin limit)
+  "Hand the indexed sessions to CALLBACK, newest first.
+CALLBACK receives a list of session alists, each carrying `session_id',
+`source_path', `source', `project', `repo_project', `cwd', `git_root',
+`started_at', `last_at', `message_count', `label', `conversation_kind'
+and `resume_cmd'.  ERRBACK receives the error object instead when the
+request fails.
+
+SESSION-ID and SOURCE-PATH match one session exactly.  CWD, PROJECT,
+SOURCE and SINCE narrow the window; ORIGIN is `regular', `interactive',
+`subagent' or `all' and LIMIT caps the answer at `memex-api-max-sessions'.
+
+Memex answers in its own order, newest activity first, and offers no sort
+key, so a caller wanting another order sorts what it gets."
+  (let ((limit (or limit 20)))
+    (when (> limit memex-api-max-sessions)
+      (signal 'memex-api-limit-error
+              (list (format "memex lists at most %d sessions, not %d"
+                            memex-api-max-sessions limit))))
+    (memex-api--call
+     "sessions" 'sessions
+     (list (cons 'request
+                 (append
+                  (memex-api--fields (cons 'session_id session-id)
+                                     (cons 'source_path source-path)
+                                     (cons 'origin origin)
+                                     (cons 'limit limit))
+                  (list (cons 'cwd (or cwd :null))
+                        (cons 'project (or project :null))
+                        (cons 'source (or source :null))
+                        (cons 'since (or since :null))))))
+     callback errback)))
+
 (cl-defun memex-api-session (session-id source-path callback &key errback)
   "Hand the whole session SESSION-ID at SOURCE-PATH to CALLBACK.
 CALLBACK receives the session context alist, whose `records' holds
