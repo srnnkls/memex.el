@@ -44,6 +44,8 @@
 (declare-function memex-search "memex")
 (declare-function memex-herdr-open-session "memex-herdr")
 
+(defvar consult--completion-candidate-hook)
+
 (defvar memex-search--consult-noted)
 (defvar memex-search-group-by-session)
 (defvar memex-search-snippet-width)
@@ -517,10 +519,10 @@ a completion UI and every consumer of a candidate find them."
                    (memex-search-tests--answering-stub records))
                   ((symbol-function 'read-string)
                    (lambda (_prompt &optional initial &rest _) (or initial "alfa")))
-                  ((symbol-function 'memex-read-record)
-                   (lambda (&optional _prompt records)
-                     (setq supplied records)
-                     (car records)))
+                  ((symbol-function 'memex-completion--read)
+                   (lambda (_prompt candidates &rest _)
+                     (setq supplied (mapcar #'memex-completion-record-of candidates))
+                     (car candidates)))
                   ((symbol-function 'memex-herdr-open-session)
                    (memex-search-tests--opener 'herdr))
                   ((symbol-function 'memex-view-session)
@@ -568,10 +570,10 @@ a completion UI and every consumer of a candidate find them."
                    (memex-search-tests--answering-stub records))
                   ((symbol-function 'read-string)
                    (lambda (_prompt &optional initial &rest _) (or initial "")))
-                  ((symbol-function 'memex-read-record)
-                   (lambda (&optional _prompt records)
-                     (setq supplied records)
-                     (car records)))
+                  ((symbol-function 'memex-completion--read)
+                   (lambda (_prompt candidates &rest _)
+                     (setq supplied (mapcar #'memex-completion-record-of candidates))
+                     (car candidates)))
                   ((symbol-function 'memex-herdr-open-session)
                    (memex-search-tests--opener 'herdr))
                   ((symbol-function 'memex-view-session)
@@ -630,7 +632,8 @@ the first of two tied scores each answers with a different record."
   (unwind-protect
       (cl-letf (((symbol-function 'memex-api-search)
                  (memex-search-tests--stub-search)))
-        (let* ((rows (memex-search-tests--rows
+        (let* ((memex-search-session-hit 'best)
+               (rows (memex-search-tests--rows
                       (memex-search-tests--session-matches)))
                (alpha (car rows))
                (label (car alpha)))
@@ -746,8 +749,8 @@ when it is not, which is the same fork `memex-org-follow' takes."
                    (memex-search-tests--answering-stub records))
                   ((symbol-function 'read-string)
                    (lambda (_prompt &optional initial &rest _) (or initial "alfa")))
-                  ((symbol-function 'memex-read-record)
-                   (lambda (&optional _prompt records) (car records)))
+                  ((symbol-function 'memex-completion--read)
+                   (lambda (_prompt candidates &rest _) (car candidates)))
                   ((symbol-function 'message) (lambda (&rest _) nil))
                   ((symbol-function 'memex-herdr-open-session)
                    (memex-search-tests--opener 'herdr))
@@ -765,8 +768,8 @@ when it is not, which is the same fork `memex-org-follow' takes."
                    (memex-search-tests--answering-stub records))
                   ((symbol-function 'read-string)
                    (lambda (_prompt &optional initial &rest _) (or initial "alfa")))
-                  ((symbol-function 'memex-read-record)
-                   (lambda (&optional _prompt records) (car records)))
+                  ((symbol-function 'memex-completion--read)
+                   (lambda (_prompt candidates &rest _) (car candidates)))
                   ((symbol-function 'message) (lambda (&rest _) nil))
                   ((symbol-function 'memex-herdr-open-session) nil)
                   ((symbol-function 'memex-view-session)
@@ -780,17 +783,7 @@ when it is not, which is the same fork `memex-org-follow' takes."
     (memex-search-tests--cleanup)))
 
 (ert-deftest memex-search-annotates-a-row-without-reprinting-what-it-snippeted ()
-  "A session row's annotation drops the field its label was cut from.
-A tool record's `text' is the output it reports, so annotating such a
-row with its `tool_output' prints the row's own content back a second
-time and spends the line on the `codex exec' preamble.  Which field the
-label was cut from is what says so; the label itself does not, because
-a label centred on the match and a tool field read from its head are
-the same content seen through two windows and agree nowhere.
-
-What the label never carried still annotates: a `tool_output' reporting
-something the text does not is the second row here, and the tool name
-is on both."
+  "Search annotations contain hit counts, never another output excerpt."
   (unwind-protect
       (cl-letf (((symbol-function 'memex-api-search)
                  (memex-search-tests--stub-search)))
@@ -806,11 +799,122 @@ is on both."
           (should-not (string-match-p "Script completed" label))
           (should-not (string-match-p "Script completed" annotation))
           (should-not (string-match-p "RESULT 1" annotation))
-          (should (string-match-p "\\bexec\\b" annotation))
-          (should (string-match-p "codex" annotation))
-          (should (string-match-p "exit status 0 wrote 3 files"
-                                  (memex-completion-annotate reported)))))
+          (should (string-match-p "\\bexec\\b" label))
+          (should (string-match-p "codex" label))
+          (should (equal annotation "  1 hit"))
+          (should-not (string-match-p "exit status"
+                                      (memex-completion-annotate reported)))))
     (memex-search-tests--cleanup)))
+
+(ert-deftest memex-search-opens-the-newest-returned-hit ()
+  (let* ((memex-search-session-hit 'newest)
+         (candidates (memex-search--candidates
+                      (memex-search-tests--session-matches) "alpha"))
+         (record (memex-completion-record-of (car candidates)))
+         opened)
+    (cl-letf (((symbol-function 'memex-herdr-open-session) nil)
+              ((symbol-function 'memex-view-session)
+               (lambda (_session _path doc-id) (setq opened doc-id))))
+      (memex-search--open record))
+    (should (equal opened 102))
+    (should (equal (alist-get 'text record) "newest alpha"))))
+
+(ert-deftest memex-search-rows-keep-the-match-and-drop-escaped-lines ()
+  (let* ((text (concat "\e[31m" (make-string 200 ?x)
+                       "\\nLMDB\\t" (make-string 200 ?y) "\e[0m"))
+         (record (memex-search-tests--record 55 "long-project-name" text)))
+    (dolist (grouped '(nil t))
+      (let* ((memex-search-group-by-session grouped)
+             (row (car (memex-search--candidates (list (list 1 record)) "lmdb"))))
+        (should (string-match-p "LMDB" row))
+        (should-not (string-match-p "[\n\t\e]\\|\\\\[nrt]" row))
+        (should (eq 'match (get-text-property (string-match "LMDB" row) 'face row)))
+        (should (equal (alist-get 'doc_id (memex-completion-record-of row)) 55))))
+    (should (equal (alist-get 'text record) text))))
+
+(ert-deftest memex-search-excerpts-use-display-columns ()
+  (let* ((memex-search-snippet-width 30)
+         (text (concat (make-string 100 ?界) " LMDB " (make-string 100 ?界)))
+         (snippet (memex-search--summarize text "lmdb")))
+    (should (string-match-p "LMDB" snippet))
+    (should (<= (string-width snippet) 30))))
+
+(ert-deftest memex-search-explicit-commands-choose-their-view ()
+  (let ((memex-search-group-by-session t)
+        calls)
+    (cl-letf (((symbol-function 'memex-search--run)
+               (lambda (&rest args) (push args calls))))
+      (memex-search-messages 'hybrid "lmdb")
+      (memex-search-sessions 'semantic "redis")
+      (memex-search 'lexical "sqlite"))
+    (should (equal (reverse calls)
+                   '((hybrid "lmdb" nil nil)
+                     (semantic "redis" t nil)
+                     (lexical "sqlite" t nil))))
+    (should memex-search-group-by-session)))
+
+(ert-deftest memex-search-toggle-preserves-query-mode-and-scope ()
+  (let ((memex-search--mode 'hybrid)
+        (memex-search-group-by-session t)
+        (memex-search--scope '((:source "codex" :session-id "s" :source-path "/s")))
+        scheduled)
+    (cl-letf (((symbol-function 'minibufferp) (lambda (&rest _) t))
+              ((symbol-function 'minibuffer-contents-no-properties)
+               (lambda () "#lmdb"))
+              ((symbol-function 'run-at-time)
+               (lambda (_time _repeat function &rest args)
+                 (setq scheduled (cons function args))))
+              ((symbol-function 'abort-recursive-edit) #'ignore))
+      (memex-search-toggle-grouping))
+    (should (equal scheduled
+                   `(memex-search--run hybrid "#lmdb" nil ,memex-search--scope)))))
+
+(ert-deftest memex-search-drilldown-uses-the-highlighted-session ()
+  (let* ((record (memex-search-tests--record 55 "memex" "lmdb"))
+         (candidate (propertize "hit" 'memex-record record))
+         (memex-search--mode 'semantic)
+         (memex-search--static-query nil)
+         (minibuffer-completion-table (lambda (&rest _) (list candidate)))
+         (consult--completion-candidate-hook (list (lambda () "hit")))
+         called)
+    (cl-letf (((symbol-function 'minibufferp) (lambda (&rest _) t))
+              ((symbol-function 'memex-search--restart)
+               (lambda (&rest args) (setq called args))))
+      (memex-search-in-selected-session))
+    (should (equal called
+                   '(semantic nil ((:source "codex" :session-id "s-search"
+                                    :source-path "/tmp/search.jsonl")))))))
+
+(ert-deftest memex-search-scope-is-sent-only-when-present ()
+  (unwind-protect
+      (dolist (scope '(nil ((:source "codex" :session-id "s" :source-path "/s"))))
+        (let ((memex-search--scope scope)
+              arguments)
+          (cl-letf (((symbol-function 'memex-api-search)
+                     (lambda (_query callback &rest args)
+                       (setq arguments args)
+                       (funcall callback nil))))
+            (memex-search-tests--drive 'lexical "lmdb")
+            (should (equal (plist-get arguments :session-scope) scope))
+            (should (eq (not (null (plist-member arguments :session-scope)))
+                        (not (null scope))))
+            (setq arguments nil)
+            (memex-search--fetch "lmdb" 'lexical)
+            (should (equal (plist-get arguments :session-scope) scope))
+            (should (eq (not (null (plist-member arguments :session-scope)))
+                        (not (null scope)))))))
+    (memex-search-tests--cleanup)))
+
+(ert-deftest memex-search-in-sessions-narrows-to-the-scope-it-was-given ()
+  (let ((scope '((:source "claude" :session-id "s1" :source-path "/tmp/s1.jsonl")
+                 (:source "codex" :session-id "s2" :source-path "/tmp/s2.jsonl")))
+        called)
+    (cl-letf (((symbol-function 'memex-search--run)
+               (lambda (&rest args) (setq called args))))
+      (memex-search-in-sessions scope)
+      (should (equal called (list 'lexical nil nil scope)))
+      (memex-search-in-sessions nil 'semantic "kv")
+      (should (equal called (list 'semantic "kv" nil nil))))))
 
 (provide 'memex-search-tests)
 ;;; memex-search-tests.el ends here

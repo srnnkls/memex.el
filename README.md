@@ -14,6 +14,34 @@ M-x memex-herdr-resume  resume the session in a herdr tab
 M-x memex-anchor-show   read the record where the live agent drew it
 ```
 
+## Search
+
+`memex-search-messages` lists individual matches; `memex-search-sessions`
+lists one match per session. `memex-search` starts according to
+`memex-search-group-by-session` (sessions by default).
+
+Search commands available for binding in `memex-search-map`:
+
+- `memex-search-toggle-grouping`: switch messages/sessions.
+- `memex-search-in-selected-session`: search the selected session's messages.
+- `memex-search-cycle-mode`: cycle lexical, semantic, and hybrid search.
+
+The package supplies no search-specific keybindings. Selecting a candidate
+opens the transcript at the match, including tool results.
+
+Switching keeps the query and session scope. Run a search command again to
+search the whole index. Without Consult, search fetches once before selection.
+
+Rows show project, source/role, timestamp, and a highlighted match excerpt.
+`memex-search-project-width`, `memex-search-identity-width`, and
+`memex-search-snippet-width` cap their display widths; excerpts also fit the
+minibuffer width. Line-break escapes and terminal colors are removed from
+candidate text only.
+
+`memex-search-session-hit` chooses the session's opening match and excerpt:
+`newest` (default) or `best`. This selects among returned hits; it does not
+change session ranking or fetch every match in the index.
+
 ## Layers
 
 | File | What it is |
@@ -37,7 +65,8 @@ M-x memex-anchor-show   read the record where the live agent drew it
 ```elisp
 (use-package memex
   :load-path "~/projects/memex.el"
-  :commands (memex-search memex-view-session memex-usage))
+  :commands (memex-search memex-search-messages memex-search-sessions
+             memex-view-session memex-usage))
 
 (use-package memex-herdr :after herdr :commands memex-herdr-resume)
 (use-package memex-anchor :after herdr :commands memex-anchor-show)
