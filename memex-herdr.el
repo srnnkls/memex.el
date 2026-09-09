@@ -261,6 +261,19 @@ the whole window."
           (funcall match (memex-herdr--sessions))))))
 
 ;;;###autoload
+(defun memex-herdr-session-scope (reference &optional directory)
+  "Return the memex session scope for herdr's agent session REFERENCE, or nil.
+REFERENCE is the `agent_session' record herdr reports for an agent.
+DIRECTORY is where that agent works and narrows the lookup window.
+
+The answer is a plist of `:source', `:session-id' and `:source-path',
+which is one element of the scope `memex-search-in-sessions' takes."
+  (when-let* ((row (memex-herdr--ref-row reference directory)))
+    (list :source (alist-get 'source row)
+          :session-id (alist-get 'session_id row)
+          :source-path (alist-get 'source_path row))))
+
+;;;###autoload
 (defun memex-herdr-open-agent-session (&optional buffer)
   "Show memex's transcript of the session the agent in BUFFER is running.
 BUFFER defaults to the current one and is an attached herdr terminal.
