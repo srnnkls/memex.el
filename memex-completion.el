@@ -19,6 +19,7 @@
 
 ;;; Code:
 
+(require 'ansi-color)
 (require 'seq)
 (require 'subr-x)
 (require 'memex-core)
@@ -40,6 +41,15 @@
   :type 'natnum
   :group 'memex)
 
+(defun memex-completion--clean (string)
+  "Return STRING as one display line, without terminal or escaped whitespace."
+  (when (stringp string)
+    (string-trim
+     (replace-regexp-in-string
+      "[[:cntrl:][:blank:]]+" " "
+      (replace-regexp-in-string
+       "\\\\[nrt]" " " (ansi-color-filter-apply string) t t)))))
+
 (defun memex-completion--one-line (string)
   "Return STRING as one line of at most `memex-completion-width'.
 Nil when STRING is absent or blank.  Runs of whitespace and control
@@ -47,8 +57,7 @@ characters collapse to a single space: record text and tool output
 arrive with the newlines and tabs of the transcript they were read
 from, which break a single-line candidate or annotation."
   (when (stringp string)
-    (let ((line (string-trim
-                 (replace-regexp-in-string "[[:cntrl:][:blank:]]+" " " string))))
+    (let ((line (memex-completion--clean string)))
       (unless (string-empty-p line)
         (truncate-string-to-width line memex-completion-width nil nil t)))))
 
@@ -124,14 +133,15 @@ label."
 What the label does not already carry: how many hits a session summary
 stands for, how long ago the record was written, where it came from and
 the tool fields the label was not built from."
-  (let ((record (memex-completion-record-of candidate)))
-    (concat "  "
-            (memex-completion--join
-             (memex-completion--hits (alist-get 'hit_count record))
-             (memex-completion--age (alist-get 'ts record))
-             (memex-completion--one-line (alist-get 'source record))
-             (memex-completion--beside record 'tool_name)
-             (memex-completion--beside record 'tool_output)))))
+  (or (and candidate (get-text-property 0 'memex-annotation candidate))
+      (let ((record (memex-completion-record-of candidate)))
+        (concat "  "
+                (memex-completion--join
+                 (memex-completion--hits (alist-get 'hit_count record))
+                 (memex-completion--age (alist-get 'ts record))
+                 (memex-completion--one-line (alist-get 'source record))
+                 (memex-completion--beside record 'tool_name)
+                 (memex-completion--beside record 'tool_output))))))
 
 (defun memex-completion--short-id (id)
   "Return the tail of ID standing for it in a candidate label."
