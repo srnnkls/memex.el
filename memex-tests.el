@@ -31,6 +31,7 @@
 (require 'memex-completion-tests)
 (require 'memex-search-tests)
 (require 'memex-view-tests)
+(require 'memex-status-tests)
 (require 'memex-usage-tests)
 (require 'memex-evil-tests)
 (require 'memex-herdr-tests)

@@ -7,12 +7,46 @@ puts the index up in the minibuffer and in Emacs buffers, and takes an indexed
 session back to a live agent.
 
 ```
+M-x memex-status        list the sessions memex indexed, newest first
 M-x memex-search        search the index, as you type where consult is installed
 M-x memex-view-session  read a whole session's transcript in a buffer
 M-x memex-usage         report memex's token usage
 M-x memex-herdr-resume  resume the session in a herdr tab
 M-x memex-anchor-show   read the record where the live agent drew it
 ```
+
+## Dashboard
+
+`memex-status` lists the sessions memex indexed, newest activity first: one
+collapsible row per session over its age, size, source, repository and
+subject, expanding into the identity memex holds for it.
+
+| Key | Action |
+| --- | --- |
+| `RET` / `o` | Read the transcript |
+| `r` | Resume it in a herdr tab |
+| `w` | Copy the command that resumes it |
+| `s` | Search — the session at point, or every session listed |
+| `S` | Search menu: scope and retrieval mode |
+| `f` | Narrow what memex is asked for |
+| `O` | Order the rows |
+| `L` | How many rows to ask for |
+| `g` | Refresh |
+| `?` | A menu of these same keys |
+
+`n`, `p`, `TAB` and `M-1`..`M-4` come from `magit-section-mode-map`.
+
+`f` narrows the *request* — source, project, directory, activity since, and
+the origin subset — because memex applies a limit after its filters, so
+narrowing in the buffer would leave fewer rows than asked for. `O` orders
+what came back and spends no request: memex answers newest first and offers
+no sort key, so ordering by size shows the largest of the sessions asked
+for, not the largest memex knows. `L` is how wide that window is, capped at
+`memex-api-max-sessions`.
+
+Search is scoped to what point stands for. On a row that is one session; off
+a row it is every session listed, which makes a narrowed dashboard a way to
+pick the sessions a search runs over.
 
 ## Search
 
@@ -47,9 +81,10 @@ change session ranking or fetch every match in the index.
 | File | What it is |
 | --- | --- |
 | `memex-core.el` | RPC transport — `memex-rpc`, `memex-executable`, errors, customs |
-| `memex-api.el` | one wrapper per operation of memex's RPC surface, eleven of them |
+| `memex-api.el` | one wrapper per operation of memex's RPC surface, twelve of them |
 | `memex-completion.el` | `memex-read-record`, `memex-read-session`, `memex-read-project` |
 | `memex.el` | `memex-search`, over core, api, completion, view and usage — a leaf no other module requires |
+| `memex-status.el` | the session dashboard, a magit-section list |
 | `memex-view.el` | the whole-session transcript viewer, a magit-section tree |
 | `memex-usage.el` | the token usage report |
 | `memex-herdr.el` | the resume bridge — an indexed session back into a herdr tab |
@@ -67,6 +102,10 @@ change session ranking or fetch every match in the index.
   :load-path "~/projects/memex.el"
   :commands (memex-search memex-search-messages memex-search-sessions
              memex-view-session memex-usage))
+
+(use-package memex-status
+  :load-path "~/projects/memex.el"
+  :commands memex-status)
 
 (use-package memex-herdr :after herdr :commands memex-herdr-resume)
 (use-package memex-anchor :after herdr :commands memex-anchor-show)
