@@ -986,25 +986,24 @@ CHANGE is `next-single-property-change' or
     position))
 
 (defun memex-view--same-doc-p (one other)
-  "Return non-nil where ONE and OTHER name the same record.
-An id arrives as a number from memex and as a string from a completion
-table, and a hit lost to that difference reads as a search that jumped
-nowhere."
+  "Return non-nil when ONE and OTHER name the same numeric or string ID."
   (and one other (equal (format "%s" one) (format "%s" other))))
 
 (defun memex-view--record-position (doc-id)
   "Return the start of the region rendering the record DOC-ID, or nil.
 A record still queued behind the chunks being drawn is drawn first."
-  (let ((position (point-min))
-        (found nil))
-    (when (car memex-view--pending)
-      (memex-view--fill-completely))
-    (while (and position (not found))
-      (let ((record (get-text-property position 'memex-record)))
-        (if (memex-view--same-doc-p (alist-get 'doc_id record) doc-id)
-            (setq found position)
-          (setq position (next-single-property-change position 'memex-record)))))
-    found))
+  (when (car memex-view--pending)
+    (memex-view--fill-completely))
+  (when-let* ((section
+               (seq-find
+                (lambda (section)
+                  (let ((entry (oref section value)))
+                    (or (memex-view--same-doc-p
+                         (alist-get 'doc_id (memex-entry-call entry)) doc-id)
+                        (memex-view--same-doc-p
+                         (alist-get 'doc_id (memex-entry-result entry)) doc-id))))
+                (and magit-root-section (oref magit-root-section children)))))
+    (marker-position (oref section start))))
 
 (defun memex-view-record-at-point ()
   "Return the record point is in, or nil when it is in none."

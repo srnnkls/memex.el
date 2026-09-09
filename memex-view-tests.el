@@ -178,6 +178,21 @@ its output, which is what memex records and what must not be echoed."
             (text . ,output)
             (source_path . ,memex-view-tests--source-path)))))
 
+(ert-deftest memex-view-opens-on-a-paired-result-hit ()
+  (unwind-protect
+      (let* ((memex-view-chunk-size 1)
+             (records (memex-view-tests--entry-records))
+             (buffer (memex-view-tests--open
+                      records memex-view-tests--session-id
+                      memex-view-tests--source-path 8803)))
+        (with-current-buffer buffer
+          (should (memex-view-tests--starts-record-p (nth 1 records)))
+          (should (equal (alist-get 'doc_id
+                                    (memex-entry-result
+                                     (memex-view-entry-at-point))) 8803))
+          (should-not (invisible-p (point)))))
+    (memex-view-tests--cleanup)))
+
 (defun memex-view-tests--long-line-records ()
   "Return one record whose text is a single 20000-character line.
 Minified output and base64 blobs reach this length in real transcripts,
