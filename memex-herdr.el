@@ -305,12 +305,13 @@ yet, is refused by name rather than opened empty."
 (defun memex-herdr-setup ()
   "Offer an attached agent's transcript from herdr's own transient.
 Absent herdr the command remains, reachable by name; this only puts it
-where the rest of the agent commands are."
+where the rest of the agent commands are.  Herdr binds `x' to stopping an
+agent, so the transcript goes under `v'."
   (when (and (fboundp 'transient-append-suffix)
-             (not (ignore-errors (transient-get-suffix 'herdr-transient "x"))))
+             (not (ignore-errors (transient-get-suffix 'herdr-transient "v"))))
     (ignore-errors
       (transient-append-suffix 'herdr-transient "i"
-        '("x" "memex transcript" memex-herdr-open-agent-session)))))
+        '("v" "memex transcript" memex-herdr-open-agent-session)))))
 
 (with-eval-after-load 'herdr-transient (memex-herdr-setup))
 ;;;###autoload (with-eval-after-load 'herdr-transient (memex-herdr-setup))
