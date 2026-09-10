@@ -131,7 +131,8 @@ ERRBACK receives the error object instead when the request fails."
                                   (session-scope nil session-scope-supplied)
                                   cwd source since until
                                   min-score project-grouping include-reasoning
-                                  recency-weight recency-half-life-days)
+                                  recency-weight recency-half-life-days
+                                  text-limit)
   "Search the index for QUERY and hand the matches to CALLBACK.
 CALLBACK receives a list of (SCORE RECORD) pairs, best match first.
 ERRBACK receives the error object instead when the request fails.
@@ -144,6 +145,9 @@ PROJECT, ROLE, TOOL, SESSION-ID, CWD, SOURCE, SINCE, UNTIL, MIN-SCORE
 and PROJECT-GROUPING narrow the result set, SESSION-SCOPE to a list of
 plists of :source, :session-id and :source-path.  SINCE and UNTIL are
 epoch milliseconds.  Non-nil INCLUDE-REASONING keeps reasoning records.
+TEXT-LIMIT caps the characters of text and tool fields each record
+carries back, kept around the first query term; omitted, records come
+back whole.
 An omitted filter is left out of the request; an empty SESSION-SCOPE
 matches no session rather than every one."
   (memex-api--call
@@ -168,7 +172,8 @@ matches no session rather than every one."
                 (cons 'until until)
                 (cons 'min_score min-score)
                 (cons 'project_grouping project-grouping)
-                (cons 'include_reasoning include-reasoning))))
+                (cons 'include_reasoning include-reasoning)
+                (cons 'text_limit text-limit))))
    callback errback))
 
 (cl-defun memex-api-recent (callback &key errback limit project-grouping)

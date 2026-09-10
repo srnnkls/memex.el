@@ -133,6 +133,12 @@ over-fetches against it.")
   "Return the input debounce MODE queries under, nil for consult's own."
   (and (eq mode 'semantic) memex-search-debounce))
 
+(defun memex-search--text-limit ()
+  "Return the characters of text a search hit needs to carry.
+A row shows an excerpt of `memex-search-snippet-width' columns around
+the query, so whole tool transcripts only cost transfer and parsing."
+  (* 4 memex-search-snippet-width))
+
 (defun memex-search--candidate-limit ()
   "Return the number of matches to ask memex for.
 Grouping over-fetches the way memex's own CLI does before it
@@ -379,6 +385,7 @@ reporting the kill as a transport failure on every keystroke."
                                    (or (plist-get (cdr failure) :message)
                                        (error-message-string failure)))))
                       :mode mode :limit (memex-search--candidate-limit)
+                      :text-limit (memex-search--text-limit)
                       (and memex-search--scope
                            (list :session-scope memex-search--scope))))))))))))
 
@@ -461,6 +468,7 @@ Grouped, the answer is one summary record per session."
                (lambda (callback errback)
                  (apply #'memex-api-search query callback :errback errback
                         :mode mode :limit (memex-search--candidate-limit)
+                      :text-limit (memex-search--text-limit)
                         (and memex-search--scope
                              (list :session-scope memex-search--scope)))))))
     (if memex-search-group-by-session
