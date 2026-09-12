@@ -801,7 +801,10 @@ when it is not, which is the same fork `memex-org-follow' takes."
           (should-not (string-match-p "RESULT 1" annotation))
           (should (string-match-p "\\bexec\\b" label))
           (should (string-match-p "codex" label))
-          (should (equal annotation "  1 hit"))
+          (should (string-match-p "\\` +1 hit +[0-9]+[smhd]\\'"
+                                  (substring-no-properties annotation)))
+          (should (text-property-any 0 (length annotation)
+                                     'marginalia--align t annotation))
           (should-not (string-match-p "exit status"
                                       (memex-completion-annotate reported)))))
     (memex-search-tests--cleanup)))
@@ -915,6 +918,54 @@ when it is not, which is the same fork `memex-org-follow' takes."
       (should (equal called (list 'lexical nil nil scope)))
       (memex-search-in-sessions nil 'semantic "kv")
       (should (equal called (list 'semantic "kv" nil nil))))))
+
+(ert-deftest memex-search-rows-leave-the-date-to-the-annotation ()
+  "A row carries no timestamp: the age beside it is what says when."
+  (let* ((record (memex-search-tests--record 7702 "memex.el" "alfa hit"))
+         (row (substring-no-properties (memex-search--row record "alfa"))))
+    (should (string-match-p "alfa hit" row))
+    (should (string-match-p "memex\\.el" row))
+    (should-not (string-match-p "[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]" row))))
+
+(ert-deftest memex-search-rows-measure-the-window-the-minibuffer-is-shown-in ()
+  "Layout follows the narrowest window showing the minibuffer.
+`vertico-buffer' is what puts it in a window narrower than the
+miniwindow, which spans the frame whatever that window is doing."
+  (let ((side (split-window (frame-root-window) nil 'right)))
+    (unwind-protect
+        (progn
+          (set-window-buffer side (window-buffer (minibuffer-window)))
+          (should (equal (memex-search--width) (window-width side)))
+          (should (< (memex-search--width)
+                     (window-width (minibuffer-window)))))
+      (delete-window side))))
+
+(ert-deftest memex-search-preview-draws-the-text-the-snippet-was-cut-from ()
+  "The preview shows the whole hit, not the excerpt already in the row."
+  (skip-unless (featurep 'magit-section))
+  (let* ((memex-search-group-by-session t)
+         (memex-search-snippet-width 20)
+         (text (concat "alfa " (make-string 300 ?z) " omega"))
+         (record (memex-search-tests--record 7703 "memex.el" text))
+         (candidate (car (memex-search--candidates (list (list 1.0 record))
+                                                   "alfa")))
+         (shown nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'display-buffer)
+                   (lambda (buffer &rest _) (setq shown buffer) buffer)))
+          (should-not (string-match-p "omega" (substring-no-properties candidate)))
+          (memex-search--preview candidate)
+          (should (buffer-live-p shown))
+          (should (equal (buffer-name shown) memex-search-preview-buffer-name))
+          (with-current-buffer shown
+            (should (string-match-p "omega" (buffer-string))))
+          (funcall (memex-search--state) 'preview nil)
+          (should-not (get-buffer memex-search-preview-buffer-name))
+          (memex-search--preview candidate)
+          (funcall (memex-search--state) 'exit nil)
+          (should-not (get-buffer memex-search-preview-buffer-name)))
+      (when-let* ((buffer (get-buffer memex-search-preview-buffer-name)))
+        (kill-buffer buffer)))))
 
 (provide 'memex-search-tests)
 ;;; memex-search-tests.el ends here

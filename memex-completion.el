@@ -81,6 +81,14 @@ line is read for how stale a record is and not for when it was written."
             ((< seconds 86400) (format "%dh" (/ seconds 3600)))
             (t (format "%dd" (/ seconds 86400)))))))
 
+(defconst memex-completion-align #(" " 0 1 (marginalia--align t))
+  "The space an annotation is aligned from.
+Marginalia right-aligns an annotation at the first character carrying
+`marginalia--align' and leaves what precedes it where it is, so an
+annotation opening with this one goes to the margin whole.  Without
+marginalia the property is inert and the space is the separator the
+annotation would have opened with anyway.")
+
 (defun memex-completion--hits (count)
   "Return COUNT as the hits a session summary stands for, or nil without one."
   (when (numberp count)
@@ -135,7 +143,7 @@ stands for, how long ago the record was written, where it came from and
 the tool fields the label was not built from."
   (or (and candidate (get-text-property 0 'memex-annotation candidate))
       (let ((record (memex-completion-record-of candidate)))
-        (concat "  "
+        (concat memex-completion-align " "
                 (memex-completion--join
                  (memex-completion--hits (alist-get 'hit_count record))
                  (memex-completion--age (alist-get 'ts record))
@@ -341,7 +349,7 @@ the newest `ts' among them."
   "Return the function annotating a project with its entry in PROJECTS."
   (lambda (candidate)
     (let ((entry (cdr (assoc candidate projects))))
-      (concat "  "
+      (concat memex-completion-align " "
               (memex-completion--join
                (and entry (format (ngettext "%d record" "%d records" (car entry))
                                   (car entry)))

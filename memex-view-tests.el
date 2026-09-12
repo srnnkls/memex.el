@@ -1283,5 +1283,24 @@ request and worth nobody's eye on every line of a session."
             (should (invisible-p identifier)))))
     (memex-view-tests--cleanup)))
 
+(ert-deftest memex-view-record-buffer-draws-one-record-under-no-session ()
+  "A lone record renders whole and the buffer joins no session registry."
+  (skip-unless (featurep 'magit-section))
+  (let* ((record (car (memex-view-tests--records)))
+         (name "*memex view tests record*")
+         (buffer (memex-view-record-buffer record name)))
+    (unwind-protect
+        (with-current-buffer buffer
+          (should (derived-mode-p 'memex-session-mode))
+          (should (string-match-p "third line of alpha" (buffer-string)))
+          (should (equal (get-text-property (memex-view-tests--position-of
+                                            "alpha question")
+                                           'memex-record)
+                         record))
+          (should-not (memex-view-session-buffer
+                       memex-view-tests--session-id
+                       memex-view-tests--source-path)))
+      (kill-buffer buffer))))
+
 (provide 'memex-view-tests)
 ;;; memex-view-tests.el ends here

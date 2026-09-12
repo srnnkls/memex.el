@@ -39,6 +39,7 @@
 (defvar embark-general-map)
 (defvar embark-keymap-alist)
 (defvar marginalia-annotators)
+(defvar nerd-icons-completion-category-icons)
 
 (declare-function memex-herdr-open-session "memex-herdr"
                   (session-id source-path &optional doc-id))
@@ -132,6 +133,21 @@ not on offer for it."
     (add-to-list 'marginalia-annotators
                  (list category #'memex-completion-annotate 'builtin 'none))))
 
+(defconst memex-embark-icons
+  '((memex-record  . (nerd-icons-codicon "nf-cod-comment" nerd-icons-blue))
+    (memex-session . (nerd-icons-codicon "nf-cod-comment_discussion"
+                                         nerd-icons-lgreen))
+    (memex-project . (nerd-icons-codicon "nf-cod-repo" nerd-icons-orange)))
+  "The icon each memex category is drawn under, in nerd-icons' own shape.")
+
+(defun memex-embark--icons ()
+  "Give memex's categories an icon where nerd-icons draws the margin.
+The icon lands in the prefix column, which memex has no other way into:
+its metadata offers an annotation and nerd-icons is what turns one into
+an affixation."
+  (dolist (entry memex-embark-icons)
+    (add-to-list 'nerd-icons-completion-category-icons entry)))
+
 ;;;###autoload
 (defun memex-embark-setup ()
   "Offer memex's candidates to embark, and to marginalia where it is loaded.
@@ -154,7 +170,11 @@ idempotent for the user whose marginalia was already up."
   (when (boundp 'marginalia-annotators)
     (memex-embark--annotate))
   (with-eval-after-load 'marginalia
-    (memex-embark--annotate)))
+    (memex-embark--annotate))
+  (when (boundp 'nerd-icons-completion-category-icons)
+    (memex-embark--icons))
+  (with-eval-after-load 'nerd-icons-completion
+    (memex-embark--icons)))
 
 (with-eval-after-load 'embark (memex-embark-setup))
 

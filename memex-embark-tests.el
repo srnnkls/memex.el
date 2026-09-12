@@ -30,6 +30,7 @@
 (defvar embark-keymap-alist)
 (defvar embark-general-map)
 (defvar marginalia-annotators)
+(defvar nerd-icons-completion-category-icons)
 
 (defconst memex-embark-tests--load
   (list :embark-before (featurep 'embark)
@@ -342,6 +343,25 @@ target bound for a command and leaves them on for a function, so the
     (embark--act 'memex-embark-copy-record-id
                  (list :type 'memex-record :target candidate))
     (should (equal (car kill-ring) (format "%s" (alist-get 'doc_id record))))))
+
+(ert-deftest memex-embark-gives-each-category-an-icon-where-nerd-icons-is-up ()
+  "Every memex category reaches nerd-icons under a spec it can draw.
+The registry is stubbed the way the marginalia one is, and the entry is
+asserted down to the shape nerd-icons reads it in: an icon function, an
+icon name and a face, taken as the first three of the entry's `cdr'
+\(nerd-icons-completion.el:111-117).  The names are asserted rather
+than resolved, since nerd-icons is no more on the batch load path than
+embark is."
+  (should (require 'memex-embark nil t))
+  (let ((embark-keymap-alist nil)
+        (embark-general-map (make-sparse-keymap)))
+    (cl-progv '(nerd-icons-completion-category-icons) '(nil)
+      (memex-embark-setup)
+      (dolist (category '(memex-record memex-session memex-project))
+        (let ((spec (cdr (assq category nerd-icons-completion-category-icons))))
+          (should (string-prefix-p "nerd-icons-" (symbol-name (nth 0 spec))))
+          (should (string-prefix-p "nf-" (nth 1 spec)))
+          (should (string-prefix-p "nerd-icons-" (symbol-name (nth 2 spec)))))))))
 
 (provide 'memex-embark-tests)
 ;;; memex-embark-tests.el ends here

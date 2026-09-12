@@ -66,11 +66,17 @@ opens the transcript at the match, including tool results.
 Switching keeps the query and session scope. Run a search command again to
 search the whole index. Without Consult, search fetches once before selection.
 
-Rows show project, source/role, timestamp, and a highlighted match excerpt.
+Rows show project, source/role, and a highlighted match excerpt.
 `memex-search-project-width`, `memex-search-identity-width`, and
 `memex-search-snippet-width` cap their display widths; excerpts also fit the
-minibuffer width. Line-break escapes and terminal colors are removed from
-candidate text only.
+narrowest window the minibuffer is shown in, which is the vertico-buffer
+window where that is up and the miniwindow otherwise. Line-break escapes and
+terminal colors are removed from candidate text only.
+
+The margin carries how many hits a session row stands for and how long ago the
+record was written, right-aligned under Marginalia. With Consult, the
+highlighted candidate is drawn whole in `*memex preview*` — the excerpt in the
+row is a window into it — under `consult-preview-key`.
 
 `memex-search-session-hit` chooses the session's opening match and excerpt:
 `newest` (default) or `best`. This selects among returned hits; it does not
@@ -119,7 +125,15 @@ Everything under the first block is optional, and so is every package it names.
 `memex-view.el` also requires `magit-section`, which the transcript is built out
 of. herdr, embark, evil, consult and marginalia are each probed for at call time
 or wired through `with-eval-after-load`, so an Emacs missing one of them loses that
-layer and nothing besides. `memex-org.el` is the exception — it requires `ol`,
+layer and nothing besides. `nerd-icons-completion` is probed the same way and
+gives each memex category its icon. A search row is wide, so it is worth giving
+the category a window of its own:
+
+```elisp
+(with-eval-after-load 'vertico-multiform
+  (add-to-list 'vertico-multiform-categories '(memex-record buffer)))
+```
+ `memex-org.el` is the exception — it requires `ol`,
 `org` and `org-capture` at load time — and Org ships with Emacs. `memex-search`
 reads a query and fetches once without consult, and searches as you type with it.
 

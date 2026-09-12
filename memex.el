@@ -254,14 +254,30 @@ which field its label came from prints that output back beside it."
                (or (memex-completion--clean text) "") width nil ?\s "…")
               'face face))
 
+(defun memex-search--width ()
+  "Return the columns a search row is drawn for.
+The narrowest window the minibuffer is shown in, which is what
+marginalia measures its own fields against: `vertico-buffer' puts the
+minibuffer in a window of its own, and the miniwindow that
+`minibuffer-window' names spans the frame whatever that window is
+doing, so a row laid out against it wraps in the window it lands in."
+  (let* ((mini (minibuffer-window))
+         (windows (and (window-live-p mini)
+                       (get-buffer-window-list (window-buffer mini) t 0))))
+    (if windows
+        (apply #'min (mapcar #'window-width windows))
+      (frame-width))))
+
 (defun memex-search--row (record query)
-  "Return RECORD's search row with an excerpt around QUERY."
-  (let* ((width (window-body-width (minibuffer-window)))
+  "Return RECORD's search row with an excerpt around QUERY.
+When the record was written is left to the annotation, which carries it
+as an age rather than as a date and is the one thing beside the row."
+  (let* ((width (memex-search--width))
          (project-width (min memex-search-project-width (max 8 (/ width 7))))
          (identity-width (min memex-search-identity-width (max 10 (/ width 7))))
          (memex-search-snippet-width
           (min memex-search-snippet-width
-               (max 12 (- width project-width identity-width 30))))
+               (max 12 (- width project-width identity-width 18))))
          (text (or (alist-get 'memex-search-text record)
                    (alist-get 'text record) (alist-get 'tool_output record)))
          (snippet (memex-search--summarize text query))
@@ -283,18 +299,19 @@ which field its label came from prints that output back beside it."
                               (or (alist-get 'tool_name record)
                                   (alist-get 'role record)))
       identity-width 'font-lock-keyword-face)
-     "  "
-     (propertize (if-let* ((ts (alist-get 'ts record)))
-                     (format-time-string "%m-%d %H:%M" (/ ts 1000.0))
-                   "           ")
-                 'face 'shadow)
      "  " snippet)))
 
 (defun memex-search--annotate (candidate)
-  "Return compact metadata beside search CANDIDATE."
-  (when-let* ((count (alist-get 'hit_count
-                               (memex-completion-record-of candidate))))
-    (concat "  " (memex-completion--hits count))))
+  "Return the metadata drawn in the margin beside search CANDIDATE.
+How many hits a session row stands for and how long ago the record was
+written: what the row itself has no column for."
+  (let* ((record (memex-completion-record-of candidate))
+         (fields (memex-completion--join
+                  (memex-completion--hits (alist-get 'hit_count record))
+                  (memex-completion--age (alist-get 'ts record)))))
+    (unless (string-empty-p fields)
+      (concat memex-completion-align " "
+              (propertize fields 'face 'completions-annotations)))))
 
 (defun memex-search--record-candidates (records query)
   "Return search candidates for RECORDS around QUERY."
@@ -326,6 +343,53 @@ when it is not, which is the fork `memex-org-follow' takes."
              (alist-get 'source_path record)
              (alist-get 'doc_id record)))
   record)
+
+(defconst memex-search-preview-buffer-name "*memex preview*"
+  "Name of the buffer the highlighted search candidate is drawn in.")
+
+(defun memex-search--previewed (record)
+  "Return RECORD with the whole text its snippet was cut from.
+A grouped summary carries its hit's text under `memex-search-text'
+because `text' is the snippet drawn in the row, and a preview showing
+the snippet back would say nothing the row does not."
+  (if-let* ((text (alist-get 'memex-search-text record)))
+      (let ((whole (copy-alist record)))
+        (setf (alist-get 'text whole) text)
+        whole)
+    record))
+
+(defun memex-search--preview (candidate)
+  "Draw the record CANDIDATE carries in the preview buffer.
+A record that cannot be drawn leaves the search running and says why:
+the preview is beside the work, not the work."
+  (when-let* ((record (and (stringp candidate)
+                           (memex-completion-record-of candidate))))
+    (condition-case failure
+        (display-buffer
+         (memex-view-record-buffer (memex-search--previewed record)
+                                   memex-search-preview-buffer-name))
+      (error (message "memex preview: %s" (error-message-string failure))))))
+
+(defun memex-search--reset-preview ()
+  "Take the preview down and give its window back what it was showing.
+Killing the buffer alone would leave the window consult's preview opened
+standing over whatever the search was called from."
+  (when-let* ((buffer (get-buffer memex-search-preview-buffer-name)))
+    (if-let* ((window (get-buffer-window buffer 0)))
+        (quit-restore-window window 'kill)
+      (kill-buffer buffer))))
+
+(defun memex-search--state ()
+  "Return the consult state function previewing the highlighted candidate.
+Consult asks for the preview of nothing when the selection is gone and
+once more before the search exits, and both mean the same here: the
+preview belongs to the search and no command opens it again."
+  (lambda (action candidate)
+    (pcase action
+      ('preview (if candidate
+                    (memex-search--preview candidate)
+                  (memex-search--reset-preview)))
+      ('exit (memex-search--reset-preview)))))
 
 (defun memex-search--async (mode)
   "Return the consult async function searching memex in MODE.
@@ -456,6 +520,7 @@ reporting the kill as a transport failure on every keystroke."
                      :initial initial
                      :category 'memex-record
                      :annotate #'memex-search--annotate
+                     :state (memex-search--state)
                      :lookup #'consult--lookup-member
                      :keymap memex-search-map
                      :require-match t

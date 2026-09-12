@@ -1291,6 +1291,33 @@ one session shares it."
       (memex-view--schedule-fill))))
 
 ;;;###autoload
+(defun memex-view-record-buffer (record name)
+  "Render RECORD alone into the buffer NAME and return that buffer.
+The buffer keys no session, so `memex-view-session-buffer' never answers
+with it and the next open of the session RECORD belongs to renders
+elsewhere rather than over it.
+
+The prose goes up as it was written: `memex-view--texts' is what runs a
+transcript through pandoc, and a caller rendering one record at a time -
+a preview under a moving selection - would pay for a subprocess per
+record."
+  (let ((buffer (get-buffer-create name)))
+    (with-current-buffer buffer
+      (let ((inhibit-read-only t))
+        (memex-session-mode)
+        (erase-buffer)
+        (setq-local memex-view-source (alist-get 'source record))
+        (setq-local memex-view--problems 0)
+        (let ((memex-entry--fields-cache (make-hash-table :test #'eq))
+              (magit-insert-section--parent nil))
+          (magit-insert-section (memex-view-transcript-section nil)
+            (mapc #'memex-view--insert-record (memex-entry-pair (list record))))
+          (memex-view--apply-states))
+        (set-buffer-modified-p nil)
+        (goto-char (point-min))))
+    buffer))
+
+;;;###autoload
 (defun memex-view-session (session-id source-path &optional doc-id display)
   "Show the whole session SESSION-ID at SOURCE-PATH and return its process.
 The session is fetched in one request and rendered whole.  Point lands
