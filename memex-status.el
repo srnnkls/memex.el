@@ -201,8 +201,7 @@ Nil leaves the rows in the order memex answered with.")
   (let* ((source (or (alist-get 'source session) ""))
          (mark (cdr (assoc source memex-view-source-marks))))
     (concat (if mark
-                (propertize (car mark) 'font-lock-face
-                            (list (cdr mark) 'memex-view-source-glyph))
+                (propertize (car mark) 'font-lock-face (cdr mark))
               (make-string (string-width "✳") ?\s))
             " "
             (propertize (memex-status--pad source 7)

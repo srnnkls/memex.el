@@ -172,16 +172,34 @@ Every heading is a glyph, a label and a description at fixed columns, so a run
 of entries reads down an edge rather than as a paragraph:
 
 ```
-● you
-● claude
-✔ bash       Find checkpoints
-✔ read       config.yaml
-▲ bash       Verify RED    Ran 7 tests, 0 as expected, 7 unexpected
+▌ user
+▌ ✳ claude
+▸ bash       Find checkpoints
+▪ read       config.yaml
+◂ edit       memex-view.el
+⁄ skill      rfc-contract-audit
+▹ agent      reviewer: the search changes
+▴ bash       Verify RED    Ran 7 tests, 0 as expected, 7 unexpected
+⊘ edit       memex-entry.el
 ```
 
-Each kind of entry is laid on a ground of its own and each tool wears the colour
-of what it does — green ran something, blue looked something up, orange changed
-a file, purple handed work to another agent. What a call took, when it ran and
+A call is drawn as what the tool was for, and direction is the mnemonic: `▸`
+points out of the session at work that left it, `◂` points back in at the
+session changing your own files, so a transcript answers what it touched down
+one column. `▪` only looked. `▹` is hollow because work handed to an agent
+comes back with a transcript of its own, and `⁄` is the slash a skill is
+invoked with. Two outcomes take the column from the tool: `▴`, the one glyph
+anywhere pointing up, so trouble is found without reading, and `⊘` for a call
+that never ran because you denied or interrupted it.
+
+Anyone talking takes `▌` instead, one lane down the buffer for the prose, and
+the mark of the agent who wrote a turn rides with its name rather than in the
+lane. The name and the mark are padded together, so the clock holds its column
+whether or not there is a mark.
+
+Each kind of entry is laid on a ground of its own and the same classification
+colours the tool — green ran something, blue looked something up, orange
+changed a file, purple handed work elsewhere. What a call took, when it ran and
 what it is called are there under `d`, not on every line by default.
 
 Nothing memex indexes is reasoning: Claude stores its thinking blocks empty and

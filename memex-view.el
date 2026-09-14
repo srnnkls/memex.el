@@ -123,12 +123,6 @@ colouring its name puts colour almost everywhere and leaves none of it
 meaning anything."
   :group 'memex)
 
-(defface memex-view-glyph '((t :height 1.25))
-  "Face the status glyph takes its size from.
-A glyph is read at a glance down the left of the buffer rather than
-read in a line, so it carries none of the text's proportions."
-  :group 'memex)
-
 (defconst memex-view--kind-faces
   '((human . memex-view-human)
     (assistant . memex-view-assistant)
@@ -217,9 +211,11 @@ what it starts as and what `memex-view-filter' changes.")
   :group 'memex)
 
 (defface memex-view-tool-read
-  '((((background light)) :foreground "#2b62c8" :weight bold)
-    (((background dark)) :foreground "#7fb0f5" :weight bold))
-  "Face for a tool that looked something up."
+  '((((background light)) :foreground "#0b6e84" :weight bold)
+    (((background dark)) :foreground "#66c8de" :weight bold))
+  "Face for a tool that looked something up.
+Cyan rather than blue: blue is the reader's own, and a colour that says
+both `you' and `a file was read' says neither."
   :group 'memex)
 
 (defface memex-view-tool-write
@@ -240,26 +236,39 @@ what it starts as and what `memex-view-filter' changes.")
   "Face for a tool that went out to the network."
   :group 'memex)
 
-(defconst memex-view--tool-faces
-  '(("bash" . memex-view-tool-run)
-    ("bashoutput" . memex-view-tool-run)
-    ("killshell" . memex-view-tool-run)
-    ("read" . memex-view-tool-read)
-    ("glob" . memex-view-tool-read)
-    ("grep" . memex-view-tool-read)
-    ("toolsearch" . memex-view-tool-read)
-    ("notebookread" . memex-view-tool-read)
-    ("write" . memex-view-tool-write)
-    ("edit" . memex-view-tool-write)
-    ("multiedit" . memex-view-tool-write)
-    ("notebookedit" . memex-view-tool-write)
-    ("task" . memex-view-tool-agent)
-    ("agent" . memex-view-tool-agent)
-    ("sendmessage" . memex-view-tool-agent)
-    ("workflow" . memex-view-tool-agent)
-    ("webfetch" . memex-view-tool-net)
-    ("websearch" . memex-view-tool-net))
-  "The face each tool's name is written in.
+(defconst memex-view--tool-classes
+  '(("bash" . run)
+    ("bashoutput" . run)
+    ("killshell" . run)
+    ("read" . look)
+    ("glob" . look)
+    ("grep" . look)
+    ("toolsearch" . look)
+    ("notebookread" . look)
+    ("write" . change)
+    ("edit" . change)
+    ("multiedit" . change)
+    ("notebookedit" . change)
+    ("skill" . skill)
+    ("task" . hand)
+    ("agent" . hand)
+    ("sendmessage" . hand)
+    ("workflow" . hand)
+    ("webfetch" . net)
+    ("websearch" . net))
+  "What each tool a transcript carries was for.
+Colour and shape are two readings of the same answer, so they are drawn
+from one table: a tool classed here once cannot come out green in the
+column and hollow in the glyph.")
+
+(defconst memex-view--class-faces
+  '((run . memex-view-tool-run)
+    (look . memex-view-tool-read)
+    (change . memex-view-tool-write)
+    (skill . memex-view-tool-agent)
+    (hand . memex-view-tool-agent)
+    (net . memex-view-tool-net))
+  "The face a tool of each class is written in.
 A transcript is scanned down its left edge, so what a call was for has
 to be legible as colour before it is legible as a word.")
 
@@ -267,9 +276,14 @@ to be legible as colour before it is legible as a word.")
   "Return TOOL the way a reader writes it, or nil for no tool at all."
   (and tool (downcase tool)))
 
+(defun memex-view--tool-class (label)
+  "Return the class a tool named LABEL belongs to, or nil for none."
+  (assoc-default label memex-view--tool-classes))
+
 (defun memex-view--tool-face (label)
   "Return the face a tool named LABEL is shown in."
-  (or (assoc-default label memex-view--tool-faces) 'memex-view-tool))
+  (or (alist-get (memex-view--tool-class label) memex-view--class-faces)
+      'memex-view-tool))
 
 (defun memex-view--cut (text)
   "Return TEXT as (SHOWN . HIDDEN), cut to `memex-view-output-lines'.
@@ -315,11 +329,34 @@ line as detail does not cost it the faces it was drawn with."
     (add-face-text-property 0 (length marked) 'shadow t marked)
     marked))
 
+(defconst memex-view--class-glyphs
+  '((run . "▸") (look . "▪") (net . "▪") (change . "◂")
+    (skill . "⁄") (hand . "▹"))
+  "The shape a call of each class is drawn as.
+Direction is the mnemonic: `▸' points out of the session, at work that
+left it, and `◂' points back in, at the session changing the reader's
+own files, so a transcript answers what it touched down one column.
+`▪' is everything that only looked, the network included - where a call
+went is the colour's to say.  `▹' is hollow because work handed to an
+agent comes back with a transcript of its own, and `⁄' is the slash a
+skill is invoked with.")
+
 (defconst memex-view--glyphs
-  '((ok . "○") (warn . "▲") (pending . "○"))
-  "What each outcome of a call is drawn as.
-A call is drawn hollow, so a turn someone took reads as the solid one;
-only a call that reported trouble takes a shape of its own.")
+  '((warn . "▴") (skipped . "⊘") (pending . "○"))
+  "What an outcome overrides a call's own shape with.
+`▴' is the only glyph anywhere here pointing up, so trouble is found by
+peripheral vision rather than by reading; `⊘' says the call never ran,
+which a transcript otherwise draws as though it had.")
+
+(defun memex-view--glyph (tool state)
+  "Return how a call on TOOL that ended in STATE is drawn.
+An outcome worth stopping on takes the column; everything else spends it
+on what the call was for, which is what most of a transcript is.  A tool
+of no class keeps `·': what an unknown call did is not worth guessing."
+  (or (alist-get state memex-view--glyphs)
+      (alist-get (memex-view--tool-class (memex-view--tool-label tool))
+                 memex-view--class-glyphs)
+      "·"))
 
 (defface memex-view-source-claude
   '((((class color) (min-colors 88)) :foreground "#d97757")
@@ -328,14 +365,12 @@ only a call that reported trouble takes a shape of its own.")
   :group 'memex)
 
 (defface memex-view-source-codex
-  '((((background dark)) :foreground "white")
-    (((background light)) :foreground "black")
-    (t :inherit default))
-  "Face for the mark beside a turn Codex wrote."
-  :group 'memex)
-
-(defface memex-view-source-glyph '((t :height 1.3))
-  "Face lending the vendor marks their size, over their own colour."
+  '((((background light)) :foreground "#5c5c5c")
+    (((background dark)) :foreground "#b3b3b3")
+    (t :inherit shadow))
+  "Face for the mark beside a turn Codex wrote.
+Codex has no colour of its own to be drawn in, and inventing one would
+spend the reader's attention saying only which vendor wrote a turn."
   :group 'memex)
 
 (defcustom memex-view-source-marks
@@ -376,9 +411,13 @@ a call is the tool's."
 
 (defun memex-view--header (entry label face &optional description)
   "Return the line ENTRY is headed with: its glyph, LABEL and DESCRIPTION.
-LABEL is drawn in FACE and padded to `memex-view-label-width', so a run
-of entries reads down a column rather than as a paragraph.  What the
-call took and what it is called trail behind marked as detail, which
+A call takes the shape of what it was for; anyone talking takes `▌', one
+lane down the buffer for the prose, drawn in whatever colour the speaker
+answers to, and the mark of the agent who wrote a turn rides with LABEL
+rather than in the lane.  LABEL is drawn in FACE and
+that whole name is padded to `memex-view-label-width', so what follows
+holds its column whether or not the name carries a mark.  What the call
+took and what it is called trail behind marked as detail, which
 `memex-view-toggle-details' shows and hides."
   (pcase-let* ((`(,state . ,reason) (memex-entry-status entry))
                (_ (when (eq state 'warn)
@@ -387,22 +426,25 @@ call took and what it is called trail behind marked as detail, which
                (tool (memex-entry-tool entry))
                (took (memex-entry-duration entry))
                (doc-id (alist-get 'doc_id call))
-               (mark (and (not tool) (memex-view--source-mark entry))))
+               (mark (and (not tool) (memex-view--source-mark entry)))
+               (name (if mark
+                         (concat (propertize (car mark) 'face (cdr mark))
+                                 " " (propertize label 'face face))
+                       (propertize label 'face face))))
     (concat
      (make-string memex-view-heading-indent ?\s)
-     (if mark
-         (propertize (car mark)
-                     'face (list 'memex-view-source-glyph (cdr mark)))
-       (propertize (if tool (alist-get state memex-view--glyphs "·") "●")
-                   'face (if tool
-                             (pcase state
-                               ('warn 'memex-view-warning)
-                               ('ok 'memex-view-ok)
-                               (_ 'shadow))
-                           face)))
+     (propertize (if tool (memex-view--glyph tool state) "▌")
+                 'face (cond
+                        (tool (pcase state
+                                ('warn 'memex-view-warning)
+                                ('ok (memex-view--tool-face
+                                      (memex-view--tool-label tool)))
+                                (_ 'shadow)))
+                        (mark (cdr mark))
+                        (t face)))
      " "
-     (propertize label 'face (if mark (cdr mark) face))
-     (make-string (max 1 (- memex-view-label-width (string-width label))) ?\s)
+     name
+     (make-string (max 1 (- memex-view-label-width (string-width name))) ?\s)
      (if-let* ((clock (and memex-view-heading-clock
                            (memex-view--clock (alist-get 'ts call)))))
          (concat (propertize clock 'face 'shadow) "  ")
@@ -767,14 +809,16 @@ dropping it would unfold every section in the buffer."
 
 (defun memex-view--label (entry)
   "Return the word ENTRY is headed by and the face it takes, as a cons.
-A tool is named by itself.  A person is named `you', since a transcript
-is scanned for where they came back in; an agent by the source memex
-recorded it under, since a project is read across several of them and
-which one wrote a passage is half of reading it."
+A tool is named by itself.  A person is named `user', the role their
+records carry: a transcript is read beside the harness that wrote it,
+and a name of the viewer's own invention is one more thing to map back.
+An agent is named by the source memex recorded it under, since a project
+is read across several of them and which one wrote a passage is half of
+reading it."
   (if-let* ((tool (memex-view--tool-label (memex-entry-tool entry))))
       (cons tool (memex-view--tool-face tool))
     (pcase (memex-entry-kind entry)
-      ('human (cons "you" 'memex-view-human-label))
+      ('human (cons "user" 'memex-view-human-label))
       ('assistant (cons (or (alist-get 'source (memex-entry-call entry))
                             "assistant")
                         'memex-view-agent-label))

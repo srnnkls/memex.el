@@ -440,7 +440,7 @@ finds it."
                          (get-text-property (match-beginning 0) 'face))))
           (should (string-search clock (thing-at-point 'line t)))
           (goto-char (point-min))
-          (should (search-forward "● you" nil t))
+          (should (search-forward "▌ user" nil t))
           (should-not (string-search "⌬" (thing-at-point 'line t)))))
     (memex-view-tests--cleanup)))
 
@@ -1024,9 +1024,61 @@ seeing folded, so the reason rides on the heading."
                                              memex-view-tests--source-path)))
         (with-current-buffer buffer
           (goto-char (point-min))
-          (should (re-search-forward "▲" nil t))
+          (should (re-search-forward "▴" nil t))
           (goto-char (point-min))
           (should (re-search-forward "1 unexpected" nil t))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-draws-a-call-that-never-ran-apart-from-one-that-failed ()
+  "Drawing a denied call the way a finished one is drawn is the one
+reading of a transcript that is simply false."
+  (unwind-protect
+      (let* ((records (memex-view-tests--entry-records
+                       "[Request interrupted by user for tool use]"))
+             (buffer (memex-view-tests--open records
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (should (re-search-forward "⊘" nil t))
+          (goto-char (point-min))
+          (should-not (re-search-forward "▴" nil t))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-draws-a-call-as-what-the-tool-was-for ()
+  "Shape and colour are two readings of one classification, so a tool
+answers both or neither; an unclassed tool guesses at nothing."
+  (should (equal (memex-view--glyph "Bash" 'ok) "▸"))
+  (should (equal (memex-view--glyph "Read" 'ok) "▪"))
+  (should (equal (memex-view--glyph "WebFetch" 'ok) "▪"))
+  (should (equal (memex-view--glyph "Edit" 'ok) "◂"))
+  (should (equal (memex-view--glyph "Skill" 'ok) "⁄"))
+  (should (equal (memex-view--glyph "Agent" 'ok) "▹"))
+  (should (equal (memex-view--glyph "TodoWrite" 'ok) "·"))
+  (should (equal (memex-view--glyph "Bash" 'warn) "▴"))
+  (should (equal (memex-view--glyph "Skill" 'skipped) "⊘"))
+  (should (eq (memex-view--tool-face "skill") 'memex-view-tool-agent))
+  (should (eq (memex-view--tool-face "todowrite") 'memex-view-tool)))
+
+(ert-deftest memex-view-heads-every-entry-in-one-lane-and-one-clock-column ()
+  "The agent's turn carries a vendor mark and nobody else's does, so the
+mark rides inside the name rather than widening the line under it."
+  (unwind-protect
+      (let* ((records (memex-view-tests--entry-records))
+             (buffer (memex-view-tests--open records
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path))
+             (columns nil))
+        (with-current-buffer buffer
+          (goto-char (point-min))
+          (while (re-search-forward (rx (= 2 digit) ":" (= 2 digit)
+                                        ":" (= 2 digit))
+                                    nil t)
+            (goto-char (match-beginning 0))
+            (push (current-column) columns)
+            (goto-char (match-end 0)))
+          (should (> (length columns) 1))
+          (should (equal (seq-uniq columns) (list (car columns))))))
     (memex-view-tests--cleanup)))
 
 (ert-deftest memex-view-moves-between-the-entries-that-went-wrong ()
@@ -1228,9 +1280,10 @@ an entry the reader cannot see."
                               (ground "second line of beta"))))))
     (memex-view-tests--cleanup)))
 
-(ert-deftest memex-view-heads-an-agent-turn-in-its-own-colour ()
-  "The mark and the name beside it say the same thing, so they say it
-in the same colour."
+(ert-deftest memex-view-heads-an-agent-turn-under-its-vendor-mark ()
+  "Colour is the mark's to carry.  The agent writes most of a
+transcript, so colouring its name too puts colour almost everywhere and
+leaves none of it meaning anything."
   (skip-unless (featurep 'magit-section))
   (unwind-protect
       (let ((buffer (memex-view-tests--open
@@ -1238,12 +1291,34 @@ in the same colour."
                      memex-view-tests--session-id
                      memex-view-tests--source-path)))
         (with-current-buffer buffer
-          (goto-char (point-min))
-          (should (re-search-forward "claude" nil t))
-          (should (memq 'memex-view-source-claude
-                        (ensure-list (get-text-property (match-beginning 0)
-                                                        'face))))))
+          (cl-flet ((faces (text)
+                      (ensure-list
+                       (get-text-property (memex-view-tests--position-of text)
+                                          'face))))
+            (should (memq 'memex-view-source-claude (faces "✳")))
+            (should (memq 'memex-view-agent-label (faces "claude")))
+            (should-not (memq 'memex-view-source-claude (faces "claude"))))))
     (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-colours-each-speaker-s-lane-by-who-is-speaking ()
+  "The lane is the only colour a turn carries, so it is the vendor's
+where there is one and the reader's where there is not."
+  (skip-unless (featurep 'magit-section))
+  (cl-flet ((lane (source name)
+              (let ((buffer (memex-view-tests--open
+                             (memex-view-tests--records source)
+                             memex-view-tests--session-id
+                             memex-view-tests--source-path)))
+                (unwind-protect
+                    (with-current-buffer buffer
+                      (ensure-list
+                       (get-text-property
+                        (- (memex-view-tests--position-of name) 2)
+                        'face)))
+                  (memex-view-tests--cleanup)))))
+    (should (memq 'memex-view-source-claude (lane "claude" "✳ claude")))
+    (should (memq 'memex-view-source-codex (lane "codex" "⌬ codex")))
+    (should (memq 'memex-view-human-label (lane "codex" "user")))))
 
 (ert-deftest memex-view-brings-a-hit-out-of-whatever-is-folded-over-it ()
   "Most of a transcript is folded or filtered by the time a hit is
