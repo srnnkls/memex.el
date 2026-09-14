@@ -164,6 +164,29 @@ and a transcript that flags every such read flags most of itself."
                                        (tool_output . ,output)))))))
                    'warn))))
 
+(ert-deftest memex-entry-status-reads-a-call-that-never-ran-as-skipped ()
+  "A denied call and a failed one are opposite things, and the harness
+writes the denial under `Error:', which `memex-entry-failure' matches.
+The reason is dropped: the boilerplate says nothing a heading wants."
+  (cl-flet ((status (output)
+              (memex-entry-status
+               (car (memex-entry-pair
+                     (list memex-entry-tests--call
+                           `((role . "tool_result")
+                             (parent_tool_use_id . "toolu_01MX")
+                             (tool_output . ,output))))))))
+    (should (equal (car (status "[Request interrupted by user]")) 'skipped))
+    (should (equal (car (status "[Request interrupted by user for tool use]"))
+                   'skipped))
+    (should (equal (status (concat "Error: The user doesn't want to proceed "
+                                   "with this tool use. The tool use was "
+                                   "rejected (eg. if it was a file edit, the "
+                                   "new_string was NOT written to the file)."))
+                   '(skipped)))
+    (should (equal (car (status (concat "transcript.jsonl:41:\"text\": "
+                                        "\"[Request interrupted by user]\"")))
+                   'ok))))
+
 (ert-deftest memex-entry-status-of-a-call-still-running-is-unknown ()
   (should (equal (car (memex-entry-status
                        (car (memex-entry-pair (list memex-entry-tests--call)))))

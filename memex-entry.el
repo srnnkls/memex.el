@@ -55,6 +55,21 @@ a suite reporting `1 unexpected' exits 0 all the same."
   :type 'regexp
   :group 'memex-entry)
 
+(defcustom memex-entry-skipped
+  (rx bos (* (in " \t\n")) (? "Error: ")
+      (or "[Request interrupted by user"
+          "The user doesn't want to proceed with this tool use"))
+  "What in a tool's output marks the call as never having run.
+A denied call and a failed one read the same in a transcript that only
+has output to go on, and they are opposite things: nothing happened, and
+the reader is the reason.  The harness writes both of these verbatim.
+
+It is anchored for the reason `memex-entry-quoting' exists: a call that
+greps a transcript for the denial prints it, and prints it in the middle
+of what it found rather than as the whole of what it returned."
+  :type 'regexp
+  :group 'memex-entry)
+
 (defcustom memex-entry-injected
   (rx bos (* (in " \t\n"))
       (or (seq "<" (+ (in "a-z" "_-")) (in " >\n"))
@@ -288,14 +303,21 @@ section's own type and nesting already say."
 
 (defun memex-entry-status (entry)
   "Return ENTRY's outcome as (STATE . REASON).
-STATE is `ok', `warn' or `pending'.  There is no failed state: memex
-records no exit status, so a call that failed is only ever as visible as
-what it printed, and REASON is the line that said so.  What each state
-is drawn as belongs to whoever is drawing it."
+STATE is `ok', `warn', `skipped' or `pending'.  There is no failed
+state: memex records no exit status, so a call that failed is only ever
+as visible as what it printed, and REASON is the line that said so.
+`skipped' is read first, because the harness prefixes a denial with
+`Error:' and that is not what went wrong; it carries no reason, the
+boilerplate holding none a heading is better for.  What each state is
+drawn as belongs to whoever is drawing it."
   (let ((result (memex-entry-result entry)))
     (cond
      ((null result)
       (cons (if (memex-entry-tool entry) 'pending 'ok) nil))
+     ((let ((case-fold-search nil))
+        (when-let* ((output (memex-entry-output entry))
+                    ((string-match-p memex-entry-skipped output)))
+          (cons 'skipped nil))))
      ((let ((case-fold-search nil))
         (when-let* (((not (member (memex-entry-tool entry) memex-entry-quoting)))
                     (output (memex-entry-output entry))
