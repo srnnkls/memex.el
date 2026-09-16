@@ -196,14 +196,23 @@ Nil leaves the rows in the order memex answered with.")
   "Return VALUE, or the empty string, padded on the right to WIDTH."
   (truncate-string-to-width (or value "") width nil ?\s "…"))
 
+(defun memex-status--mark-width ()
+  "Return the columns a vendor mark takes on this display."
+  (apply #'max 1 (mapcar (lambda (entry)
+                           (string-width
+                            (memex-view-mark-glyph (cadr entry))))
+                         memex-view-source-marks)))
+
 (defun memex-status--source-column (session)
   "Return SESSION's harness behind the mark its vendor is drawn with."
   (let* ((source (or (alist-get 'source session) ""))
          (mark (cdr (assoc source memex-view-source-marks))))
     (concat (if mark
-                (propertize (car mark) 'font-lock-face (cdr mark))
-              (make-string (string-width "✳") ?\s))
-            " "
+                (let ((glyph (memex-view-mark-glyph (car mark))))
+                  (concat (propertize glyph 'font-lock-face
+                                      (memex-view-glyph-faces glyph (cdr mark)))
+                          (memex-view-glyph-gap glyph (cdr mark))))
+              (make-string (1+ (memex-status--mark-width)) ?\s))
             (propertize (memex-status--pad source 7)
                         'font-lock-face 'memex-status-meta))))
 

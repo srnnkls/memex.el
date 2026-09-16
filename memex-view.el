@@ -32,7 +32,7 @@
 (require 'memex-api)
 (require 'memex-completion)
 (require 'memex-entry)
-(require 'memex-markdown)
+(require 'lectio)
 
 (defvar so-long-predicate)
 (defvar memex-entry--fields-cache)
@@ -373,16 +373,92 @@ Codex has no colour of its own to be drawn in, and inventing one would
 spend the reader's attention saying only which vendor wrote a turn."
   :group 'memex)
 
+(defcustom memex-view-nerd-font 'auto
+  "Whether a mark may be drawn as a Nerd Font glyph.
+`auto' draws one on a graphical frame and leaves a terminal the Unicode
+mark instead.  Emacs answers that a Private Use Area character is
+displayable whether or not a font holds it, so a graphical frame without
+a patched font draws tofu until this is set to nil.  Non-nil asks for
+the glyph on any display, and nil never draws one."
+  :type '(choice (const :tag "Where a font covers it" auto)
+                 (const :tag "Always" t)
+                 (const :tag "Never" nil))
+  :group 'memex)
+
 (defcustom memex-view-source-marks
-  '(("claude" "✳" . memex-view-source-claude)
-    ("codex" "⌬" . memex-view-source-codex))
+  '(("claude" ("\uec82" "✳") . memex-view-source-claude)
+    ("codex" ("\uec81" "⌬") . memex-view-source-codex))
   "Marks drawn before the name of the agent a turn was written by.
 Each entry gives the glyph and the face it is drawn in, keyed by the
 source memex recorded the session under.  A source without an entry is
-drawn blank, so the names stay in the same column either way."
+drawn blank, so the names stay in the same column either way.
+
+A glyph may be a list of candidates in order of preference, of which the
+first the display can show is drawn: the Nerd Font vendor logos
+\\='nf-cod-claude\\=' and \\='nf-cod-openai\\=' come first and the
+Unicode marks behind them, so a font without the logos still says who
+wrote a turn.  `memex-view-nerd-font' decides whether the logos are
+considered at all."
   :type '(alist :key-type string
-                :value-type (cons (string :tag "Glyph") (face :tag "Face")))
+                :value-type (cons (choice (string :tag "Glyph")
+                                          (repeat (string :tag "Candidate")))
+                                  (face :tag "Face")))
   :group 'memex)
+
+(defface memex-view-nerd-glyph
+  '((t :height 0.75))
+  "Face lending a Nerd Font glyph its size, over its own colour.
+The patched glyphs are drawn larger than the text beside them, so they
+are taken down to sit with it."
+  :group 'memex)
+
+(defun memex-view--nerd-glyph-p (glyph)
+  "Return non-nil if GLYPH is drawn from a Private Use Area a Nerd Font patches."
+  (seq-some (lambda (char)
+              (or (<= #xe000 char #xf8ff) (<= #xf0000 char #xffffd)))
+            glyph))
+
+(defun memex-view--glyph-shown-p (glyph)
+  "Return non-nil if this display can draw GLYPH."
+  (and (or (not (memex-view--nerd-glyph-p glyph))
+           (if (eq memex-view-nerd-font 'auto)
+               (display-graphic-p)
+             memex-view-nerd-font))
+       (seq-every-p #'char-displayable-p glyph)))
+
+(defun memex-view-glyph-faces (glyph face)
+  "Return the faces GLYPH is drawn in, FACE among them.
+A glyph out of a Nerd Font is drawn larger than the text beside it, so
+it takes `memex-view-nerd-glyph' over its own colour; a Unicode mark is
+already the size of the text and takes FACE alone."
+  (if (memex-view--nerd-glyph-p glyph)
+      (cons 'memex-view-nerd-glyph (ensure-list face))
+    face))
+
+(defun memex-view-glyph-gap (glyph face)
+  "Return the space drawn after GLYPH in FACE.
+A patched glyph comes from a font of its own and is scaled down, so it
+is not the width of a text column and what follows would sit a fraction
+off the lines carrying no mark.  The space takes back whatever the glyph
+does not use, holding the pair at two columns.  A terminal measures in
+whole columns and needs none of it."
+  (if (not (display-graphic-p))
+      " "
+    (let* ((shown (propertize glyph 'face (memex-view-glyph-faces glyph face)))
+           (rest (- (* 2 (default-font-width)) (string-pixel-width shown))))
+      (if (> rest 0)
+          (propertize " " 'display (list 'space :width (list rest)))
+        " "))))
+
+(defun memex-view-mark-glyph (glyph)
+  "Return the string GLYPH is drawn as.
+GLYPH is one string or a list of candidates, and the first candidate the
+display can show wins.  Where none can, the last is drawn anyway: a
+column of tofu still says something was there."
+  (let ((candidates (if (listp glyph) glyph (list glyph))))
+    (or (seq-find #'memex-view--glyph-shown-p candidates)
+        (car (last candidates))
+        "")))
 
 (defcustom memex-view-heading-clock t
   "Whether every heading says the time of day its entry was recorded."
@@ -427,9 +503,13 @@ took and what it is called trail behind marked as detail, which
                (took (memex-entry-duration entry))
                (doc-id (alist-get 'doc_id call))
                (mark (and (not tool) (memex-view--source-mark entry)))
+               (glyph (and mark (memex-view-mark-glyph (car mark))))
                (name (if mark
-                         (concat (propertize (car mark) 'face (cdr mark))
-                                 " " (propertize label 'face face))
+                         (concat (propertize
+                                  glyph 'face
+                                  (memex-view-glyph-faces glyph (cdr mark)))
+                                 (memex-view-glyph-gap glyph (cdr mark))
+                                 (propertize label 'face face))
                        (propertize label 'face face))))
     (concat
      (make-string memex-view-heading-indent ?\s)
@@ -850,7 +930,7 @@ conversion per record would take minutes over a long transcript."
                  (lambda (record text)
                    (and (memex-view--markdown-p record) text))
                  records cleaned))
-         (drawn (memex-markdown-render-all prose #'memex-view--code)))
+         (drawn (lectio-render-all prose #'memex-view--code)))
     (seq-mapn (lambda (text rendered) (or rendered text)) cleaned drawn)))
 
 (defun memex-view--insert-record-body (entry text)

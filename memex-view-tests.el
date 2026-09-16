@@ -1320,6 +1320,20 @@ where there is one and the reader's where there is not."
     (should (memq 'memex-view-source-codex (lane "codex" "⌬ codex")))
     (should (memq 'memex-view-human-label (lane "codex" "user")))))
 
+(ert-deftest memex-view-marks-fall-back-to-what-the-display-shows ()
+  "A Nerd Font glyph is drawn where a font covers it and the Unicode
+mark stands in everywhere else, so a terminal still says who wrote a
+turn."
+  (let ((memex-view-nerd-font t))
+    (should (equal (memex-view-mark-glyph '("\uec82" "\u2733")) "\uec82")))
+  (let ((memex-view-nerd-font nil))
+    (should (equal (memex-view-mark-glyph '("\uec82" "\u2733")) "\u2733"))
+    (should (equal (memex-view-mark-glyph "\u232c") "\u232c"))
+    (should (equal (memex-view-mark-glyph '("\uec82")) "\uec82")))
+  (let ((memex-view-nerd-font 'auto))
+    (should (equal (memex-view-mark-glyph '("\uec82" "\u2733"))
+                   (if (display-graphic-p) "\uec82" "\u2733")))))
+
 (ert-deftest memex-view-brings-a-hit-out-of-whatever-is-folded-over-it ()
   "Most of a transcript is folded or filtered by the time a hit is
 searched for, and a hit the reader cannot see is worth nothing."
