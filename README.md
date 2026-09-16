@@ -54,17 +54,29 @@ pick the sessions a search runs over.
 lists one match per session. `memex-search` starts according to
 `memex-search-group-by-session` (sessions by default).
 
-Search commands available for binding in `memex-search-map`:
+A search is narrowed from the minibuffer it is read in, where `memex-search-map`
+is active:
 
-- `memex-search-toggle-grouping`: switch messages/sessions.
-- `memex-search-in-selected-session`: search the selected session's messages.
-- `memex-search-cycle-mode`: cycle lexical, semantic, and hybrid search.
+| Key | Action |
+| --- | --- |
+| `M-m` | Cycle lexical, semantic and hybrid retrieval |
+| `M-g` | Switch between matching messages and sessions |
+| `M-r` | Narrow to one role, or widen to every role again |
+| `M-.` | Search the messages of the selected candidate's session |
 
-The package supplies no search-specific keybindings. Selecting a candidate
-opens the transcript at the match, including tool results.
+Each restarts the search, keeping the query, the retrieval mode, the grouping,
+the session scope and the role. The prompt names every narrowing in force, so
+`memex lexical messages [user]:` is a query put to what the person wrote.
 
-Switching keeps the query and session scope. Run a search command again to
-search the whole index. Without Consult, search fetches once before selection.
+`M-r` cycles nothing, `user`, `assistant`, `tool_use`, `tool_result` and back —
+one role, because memex narrows a request to one and applies the limit after its
+filters, so a page asked for comes back a page of that role rather than a
+handful of it. `memex-search-role` is where a search starts, `nil` (every role)
+by default. Selecting a candidate opens the transcript at the match, including
+tool results.
+
+Run a search command again to search the whole index. Without Consult, search
+fetches once before selection, under the same keys.
 
 Rows show project, source/role, and a highlighted match excerpt.
 `memex-search-project-width`, `memex-search-identity-width`, and
