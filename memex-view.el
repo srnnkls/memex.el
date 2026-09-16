@@ -141,13 +141,12 @@ meaning anything."
   :group 'memex)
 
 (defcustom memex-view-initial-states
-  '((human . show) (assistant . show) (tool . hide) (system . hide))
+  '((human . show) (assistant . show) (tool . collapse) (system . hide))
   "How much of each kind of entry a transcript opens showing.
 `show' renders the entry whole, `collapse' leaves its heading and folds
 the rest away, `hide' takes it out of the buffer's view altogether.  A
-session is read for the conversation in it; the calls that carried the
-conversation out stay out of the buffer until `memex-view-toggle-tool'
-asks for them."
+session is read for the conversation in it, and the calls that carried
+the conversation out are worth a line each until one is asked for."
   :type '(alist :key-type (choice (const human) (const assistant)
                                   (const tool) (const system))
                 :value-type (choice (const :tag "Whole" show)
@@ -850,16 +849,30 @@ dropping it would unfold every section in the buffer."
 (memex-view--define-cycle tool)
 (memex-view--define-cycle system)
 
+(defun memex-view--opening-state (kind)
+  "Return the state a transcript opens KIND in."
+  (or (alist-get kind memex-view-initial-states) 'show))
+
+(defun memex-view--toggled-state (kind)
+  "Return the state KIND is put into by asking for it or letting it go.
+A kind not shown whole is shown whole; a kind already whole goes back to
+the state it opened in, which is what asking for it was a departure from.
+A kind that opens whole has nowhere to go back to and is hidden instead."
+  (if (eq (memex-view--state kind) 'show)
+      (let ((opening (memex-view--opening-state kind)))
+        (if (eq opening 'show) 'hide opening))
+    'show))
+
 (defmacro memex-view--define-toggle (kind)
-  "Define the command showing or hiding every KIND entry at one key.
-The three states are worth a menu; putting a kind in or out of the buffer
+  "Define the command asking for every KIND entry, or letting it go, at one key.
+The three states are worth a menu; asking for a kind and putting it back
 is the move a reader makes over and over, and it is bound on its own."
   (let ((name (intern (format "memex-view-toggle-%s" kind))))
     `(defun ,name ()
-       ,(format "Show every %s entry whole, or take them out of the view." kind)
+       ,(format "Show every %s entry whole, or put them back as they opened."
+                kind)
        (interactive)
-       (memex-view--set-state
-        ',kind (if (eq (memex-view--state ',kind) 'hide) 'show 'hide))
+       (memex-view--set-state ',kind (memex-view--toggled-state ',kind))
        (message "memex: %s %s" ',kind (memex-view--state ',kind)))))
 
 (memex-view--define-toggle human)

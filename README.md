@@ -163,12 +163,12 @@ line while you scroll through it, and a tool's input and output are fontified
 in the mode its tool and file path imply.
 
 A transcript opens on the conversation: what the person and the agent wrote is
-shown whole and laid on grounds of its own, and both the calls that carried it
-out and what the harness injected into somebody's turn — skill bodies, slash
-commands, file mentions, task notifications — are out of the view until asked
-for. `U`, `A`, `T` and `S` put the person, the agent, the calls and the harness
-in or out at one key; `f` opens the transient that moves any of the four between
-whole, heading and gone. The header line names whatever is not whole and
+shown whole and laid on grounds of its own, the calls that carried it out are a
+heading each, and what the harness injected into somebody's turn — skill bodies,
+slash commands, file mentions, task notifications — is filtered out. `U`, `A`,
+`T` and `S` ask for the person, the agent, the calls or the harness whole and put
+them back as they opened; `f` opens the transient that moves any of the four
+between whole, heading and gone. The header line names whatever is not whole and
 `memex-view-initial-states` sets what a transcript opens on. Filtering is
 `buffer-invisibility-spec` rather than a second render, so the text never leaves
 the buffer and a search still reaches it.
