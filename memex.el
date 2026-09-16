@@ -128,33 +128,33 @@ over-fetches against it.")
 (defvar memex-search--mode nil
   "The mode the running `memex-search' session queries memex under.")
 
-(defconst memex-search-roles '("user" "assistant" "tool_use" "tool_result")
-  "The roles memex indexes a record under, in the order they are cycled.
-Memex narrows a request to one of them, so this is a choice rather than a
-subset: `nil' ahead of them is every role, which is what a search that
-narrows nothing asks for.")
+(defconst memex-search-record-roles
+  '("user" "assistant" "tool_use" "tool_result")
+  "The roles memex indexes a record under, in the order they are offered.")
 
-(defcustom memex-search-role nil
-  "The role a search narrows to, or nil for every role memex indexed.
-Four fifths of the index is tool traffic, so a query put to the
-conversation is worth narrowing; \\<memex-search-map>\\[memex-search-cycle-role] \
-is how the running search
-narrows and widens again."
-  :type `(choice (const :tag "Every role" nil)
-                 ,@(mapcar (lambda (role) `(const ,role)) memex-search-roles))
+(defcustom memex-search-roles '("user" "assistant")
+  "The roles a search asks for, or nil for every role memex indexed.
+Four fifths of the index is tool traffic, so a page of matches is four
+fifths the calls that carried a conversation out and a query is nearly
+always put to the conversation itself.  Memex takes the set and applies it
+in the index, so a page asked for comes back a page of these roles;
+\\<memex-search-map>\\[memex-search-select-roles] is how the running \
+search asks for others."
+  :type `(set ,@(mapcar (lambda (role) `(const ,role))
+                        memex-search-record-roles))
   :group 'memex)
 
-(defvar memex-search--asked-role 'unset
-  "The role the running search narrows to, `unset' outside a search.
-A search narrowing nothing carries nil, which is what
-`memex-search-role' means by every role, so the two are told apart by the
-sentinel rather than by nil.")
+(defvar memex-search--asked-roles 'unset
+  "The roles the running search asks for, `unset' outside a search.
+A search asking for every role carries nil, which is what
+`memex-search-roles' means by every role, so the two are told apart by
+the sentinel rather than by nil.")
 
-(defun memex-search--role ()
-  "Return the role the search narrows to, or nil for every role."
-  (if (eq memex-search--asked-role 'unset)
-      memex-search-role
-    memex-search--asked-role))
+(defun memex-search--roles ()
+  "Return the roles the search asks for, or nil for every role."
+  (if (eq memex-search--asked-roles 'unset)
+      memex-search-roles
+    memex-search--asked-roles))
 
 (defvar-keymap memex-search-map
   :doc "Bindings for the `memex-search' minibuffer.
@@ -163,7 +163,8 @@ minibuffer is where the query is typed, and a search narrows while it is
 being read or not at all."
   "M-m" #'memex-search-cycle-mode
   "M-g" #'memex-search-toggle-grouping
-  "M-r" #'memex-search-cycle-role
+  "M-r" #'memex-search-select-roles
+  "M-t" #'memex-search-toggle-roles
   "M-." #'memex-search-in-selected-session)
 
 (defun memex-search--prompt (mode)
@@ -173,7 +174,9 @@ is worth nothing where the reader cannot see what it changed to."
   (format "memex %s %s%s%s: " mode
           (if memex-search-group-by-session "sessions" "messages")
           (if memex-search--scope " [session]" "")
-          (if-let* ((role (memex-search--role))) (format " [%s]" role) "")))
+          (if-let* ((roles (memex-search--roles)))
+              (format " [%s]" (string-join roles "+"))
+            "")))
 
 (defun memex-search--debounce (mode)
   "Return the input debounce MODE queries under, nil for consult's own."
@@ -496,7 +499,7 @@ reporting the kill as a transport failure on every keystroke."
                                        (error-message-string failure)))))
                       :mode mode :limit (memex-search--candidate-limit)
                       :text-limit (memex-search--text-limit)
-                      :role (memex-search--role)
+                      :roles (memex-search--roles)
                       (and memex-search--scope
                            (list :session-scope memex-search--scope))))))))))))
 
@@ -504,26 +507,20 @@ reporting the kill as a transport failure on every keystroke."
   "Return the mode following MODE in `memex-search-modes'."
   (or (cadr (memq mode memex-search-modes)) (car memex-search-modes)))
 
-(defun memex-search--next-role (role)
-  "Return the role following ROLE, nil after the last of them.
-Nil leads the cycle rather than closing it: a search narrows from every
-role to the one wanted and back out to every role again."
-  (cadr (member role (cons nil memex-search-roles))))
-
-(defun memex-search--restart (mode grouped scope &optional role)
+(defun memex-search--restart (mode grouped scope &optional roles)
   "Restart search in MODE, GROUPED by session, restricted to SCOPE.
-ROLE is the role the new search narrows to, `every' for none of them and
+ROLES are the roles the new search asks for, `every' for all of them and
 nil for the running search's own."
   (unless (and (minibufferp) memex-search--mode)
     (user-error "No memex search is active"))
   (let ((initial (or memex-search--static-query
                      (minibuffer-contents-no-properties)))
-        (role (or role (memex-search--role) 'every)))
-    (run-at-time 0 nil #'memex-search--run mode initial grouped scope role)
+        (roles (or roles (memex-search--roles) 'every)))
+    (run-at-time 0 nil #'memex-search--run mode initial grouped scope roles)
     (abort-recursive-edit)))
 
 (defun memex-search-cycle-mode ()
-  "Cycle the search mode, keeping query, grouping, scope and role."
+  "Cycle the search mode, keeping query, grouping, scope and roles."
   (interactive)
   (memex-search--restart (memex-search--next-mode memex-search--mode)
                          memex-search-group-by-session memex-search--scope))
@@ -534,16 +531,41 @@ nil for the running search's own."
   (memex-search--restart memex-search--mode
                          (not memex-search-group-by-session) memex-search--scope))
 
-(defun memex-search-cycle-role ()
-  "Narrow the search to the next role, or widen it to every role again.
-Memex narrows a request to one role, which is where narrowing by role
-belongs: the limit is applied after the filter, so a page asked for comes
-back as a page of the role wanted rather than a handful of it."
+(defun memex-search--read-roles ()
+  "Read the roles to ask memex for, as a list, empty for every role.
+Read recursively: the search this narrows is itself a minibuffer read,
+and a set is chosen rather than cycled through because the set wanted is
+usually more than one role and never all four."
+  (let ((enable-recursive-minibuffers t)
+        (roles (memex-search--roles)))
+    (completing-read-multiple
+     (format "memex roles (empty for every role)%s: "
+             (if roles (format " [now %s]" (string-join roles "+")) ""))
+     memex-search-record-roles nil t
+     (and roles (concat (string-join roles ",") ",")))))
+
+(defun memex-search-select-roles ()
+  "Ask the running search for a set of roles, or for every role.
+Memex takes the set and applies it in the index, so the page that comes
+back is a page of these roles rather than a page of the corpus with the
+rest of it dropped."
+  (interactive)
+  (unless (and (minibufferp) memex-search--mode)
+    (user-error "No memex search is active"))
+  (memex-search--restart memex-search--mode memex-search-group-by-session
+                         memex-search--scope
+                         (or (memex-search--read-roles) 'every)))
+
+(defun memex-search-toggle-roles ()
+  "Ask for every role, or go back to `memex-search-roles'.
+The set is chosen with \\<memex-search-map>\\[memex-search-select-roles]; \
+this is the one move worth a key of
+its own, since a query the conversation does not answer is a query for
+the calls it was carried out by."
   (interactive)
   (memex-search--restart memex-search--mode memex-search-group-by-session
                          memex-search--scope
-                         (or (memex-search--next-role (memex-search--role))
-                             'every)))
+                         (if (memex-search--roles) 'every memex-search-roles)))
 
 (defun memex-search--selected-record ()
   "Return the highlighted search candidate's record."
@@ -602,7 +624,7 @@ Grouped, the answer is one summary record per session."
                  (apply #'memex-api-search query callback :errback errback
                         :mode mode :limit (memex-search--candidate-limit)
                       :text-limit (memex-search--text-limit)
-                        :role (memex-search--role)
+                        :roles (memex-search--roles)
                         (and memex-search--scope
                              (list :session-scope memex-search--scope)))))))
     (if memex-search-group-by-session
@@ -643,16 +665,16 @@ recent window."
                                 (mapcar #'symbol-name memex-search-modes)
                                 nil t))))
 
-(defun memex-search--run (mode initial grouped scope &optional role)
+(defun memex-search--run (mode initial grouped scope &optional roles)
   "Search in MODE from INITIAL, GROUPED by session and restricted to SCOPE.
-ROLE is the role to narrow to: `every' for none of them, nil for
-`memex-search-role', a role for itself."
+ROLES are the roles to ask for: `every' for all of them, nil for
+`memex-search-roles', a list for itself."
   (let ((mode (or mode 'lexical))
         (memex-search-group-by-session grouped)
         (memex-search--scope scope)
-        (memex-search--asked-role (cond ((null role) 'unset)
-                                        ((eq role 'every) nil)
-                                        (t role)))
+        (memex-search--asked-roles (cond ((null roles) 'unset)
+                                         ((eq roles 'every) nil)
+                                         (t roles)))
         (memex-search--static-query nil))
     (if (require 'consult nil t)
         (memex-search--consult mode initial)

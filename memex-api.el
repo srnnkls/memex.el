@@ -126,7 +126,7 @@ ERRBACK receives the error object instead when the request fails."
   (memex-api--call "ping" 'version nil callback errback))
 
 (cl-defun memex-api-search (query callback
-                                  &key errback limit mode project role tool
+                                  &key errback limit mode project roles tool
                                   session-id
                                   (session-scope nil session-scope-supplied)
                                   cwd source since until
@@ -141,9 +141,12 @@ LIMIT caps the number of matches (20).  MODE is `lexical', `semantic'
 or `hybrid' (`lexical').  RECENCY-WEIGHT (1.0) and
 RECENCY-HALF-LIFE-DAYS (30.0) shape the recency boost.
 
-PROJECT, ROLE, TOOL, SESSION-ID, CWD, SOURCE, SINCE, UNTIL, MIN-SCORE
+PROJECT, ROLES, TOOL, SESSION-ID, CWD, SOURCE, SINCE, UNTIL, MIN-SCORE
 and PROJECT-GROUPING narrow the result set, SESSION-SCOPE to a list of
-plists of :source, :session-id and :source-path.  SINCE and UNTIL are
+plists of :source, :session-id and :source-path.  ROLES is a list of the
+roles a record may carry, and matches every role omitted or empty: memex
+takes them as a set and applies them in the index, where the limit is
+applied after the filter.  SINCE and UNTIL are
 epoch milliseconds.  Non-nil INCLUDE-REASONING keeps reasoning records.
 TEXT-LIMIT caps the characters of text and tool fields each record
 carries back, kept around the first query term; omitted, records come
@@ -160,7 +163,7 @@ matches no session rather than every one."
                 (cons 'recency_weight (or recency-weight 1.0))
                 (cons 'recency_half_life_days (or recency-half-life-days 30.0))
                 (cons 'project project)
-                (cons 'role role)
+                (cons 'roles (and roles (vconcat roles)))
                 (cons 'tool tool)
                 (cons 'session_id session-id)
                 (cons 'session_scope

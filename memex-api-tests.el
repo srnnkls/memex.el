@@ -445,7 +445,7 @@ TIMEOUT bounds the wait.  See `memex-api-tests--exchange-with'."
                              :mode 'hybrid :limit 5 :source 'open-claw
                              :project "memex.el" :min-score 0.25
                              :recency-weight 0.0 :recency-half-life-days 7.0
-                             :role "assistant" :tool "shell"
+                             :roles '("user" "assistant") :tool "shell"
                              :session-id "caea32e0"
                              :session-scope
                              (list (list :source 'open-claw
@@ -459,7 +459,7 @@ TIMEOUT bounds the wait.  See `memex-api-tests--exchange-with'."
                (spec (alist-get 'spec (memex-api-tests--sent exchange)))
                (scope (alist-get 'session_scope spec)))
           (should (equal (alist-get 'mode spec) "hybrid"))
-          (should (equal (alist-get 'role spec) "assistant"))
+          (should (equal (alist-get 'roles spec) ["user" "assistant"]))
           (should (equal (alist-get 'tool spec) "shell"))
           (should (equal (alist-get 'session_id spec) "caea32e0"))
           (should (equal (alist-get 'cwd spec) "/home/user/memex.el"))

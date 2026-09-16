@@ -61,19 +61,24 @@ is active:
 | --- | --- |
 | `M-m` | Cycle lexical, semantic and hybrid retrieval |
 | `M-g` | Switch between matching messages and sessions |
-| `M-r` | Narrow to one role, or widen to every role again |
+| `M-r` | Choose the set of roles to ask for |
+| `M-t` | Ask for every role, or go back to the chosen set |
 | `M-.` | Search the messages of the selected candidate's session |
 
 Each restarts the search, keeping the query, the retrieval mode, the grouping,
-the session scope and the role. The prompt names every narrowing in force, so
-`memex lexical messages [user]:` is a query put to what the person wrote.
+the session scope and the roles. The prompt names every narrowing in force, so
+`memex lexical messages [user+assistant]:` is a query put to the conversation.
 
-`M-r` cycles nothing, `user`, `assistant`, `tool_use`, `tool_result` and back —
-one role, because memex narrows a request to one and applies the limit after its
-filters, so a page asked for comes back a page of that role rather than a
-handful of it. `memex-search-role` is where a search starts, `nil` (every role)
-by default. Selecting a candidate opens the transcript at the match, including
-tool results.
+`memex-search-roles` is the set a search starts from, `("user" "assistant")` by
+default: four fifths of the index is tool traffic, and a query is nearly always
+put to the conversation rather than to the calls that carried it out. `M-r`
+reads the set — an empty answer asks for every role — and `M-t` swings between
+the set and all of it. memex takes the roles as a set and applies them in the
+index, so the page that comes back is a page of those roles rather than a page
+of the corpus with the rest dropped. This needs a memex built with `roles` in
+its search spec; against an older binary the set is ignored and every role comes
+back. Selecting a candidate opens the transcript at the match, including tool
+results.
 
 Run a search command again to search the whole index. Without Consult, search
 fetches once before selection, under the same keys.

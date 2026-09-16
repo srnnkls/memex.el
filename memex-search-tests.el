@@ -49,8 +49,8 @@
 (defvar memex-search--consult-noted)
 (defvar memex-search-group-by-session)
 (defvar memex-search-snippet-width)
-(defvar memex-search-role)
-(defvar memex-search--asked-role)
+(defvar memex-search-roles)
+(defvar memex-search--asked-roles)
 
 (defconst memex-search-tests--sink-answer (list 'candidates)
   "What the stub sink answers a nil action with.
@@ -79,14 +79,14 @@ async function answered on the sink's behalf.")
 
 (defun memex-search-tests--stub-search ()
   "Return a stand-in for `memex-api-search' recording what it is handed.
-Each call records a plist of `:query', `:mode', `:limit', `:role',
+Each call records a plist of `:query', `:mode', `:limit', `:roles',
 `:callback' and `:process' and answers with a live process, so a request
 that was superseded can be told from one that is still running."
   (lambda (query callback &rest arguments)
     (let ((process (memex-search-tests--sleeper)))
       (push (list :query query :mode (plist-get arguments :mode)
                   :limit (plist-get arguments :limit)
-                  :role (plist-get arguments :role)
+                  :roles (plist-get arguments :roles)
                   :callback callback :process process)
             memex-search-tests--requests)
       process)))
@@ -862,7 +862,7 @@ when it is not, which is the same fork `memex-org-follow' takes."
 (ert-deftest memex-search-toggle-preserves-query-mode-scope-and-role ()
   (let ((memex-search--mode 'hybrid)
         (memex-search-group-by-session t)
-        (memex-search-role "assistant")
+        (memex-search-roles '("assistant"))
         (memex-search--scope '((:source "codex" :session-id "s" :source-path "/s")))
         scheduled)
     (cl-letf (((symbol-function 'minibufferp) (lambda (&rest _) t))
@@ -875,7 +875,7 @@ when it is not, which is the same fork `memex-org-follow' takes."
       (memex-search-toggle-grouping))
     (should (equal scheduled
                    `(memex-search--run hybrid "#lmdb" nil ,memex-search--scope
-                                       "assistant")))))
+                                       ("assistant"))))))
 
 (ert-deftest memex-search-drilldown-uses-the-highlighted-session ()
   (let* ((record (memex-search-tests--record 55 "memex" "lmdb"))
@@ -989,35 +989,32 @@ along behind it: the search hands consult the key it waits for."
         (memex-search--consult 'lexical "alfa")
         (should (eq (plist-get options :preview-key) 'any))))))
 
-(ert-deftest memex-search-narrows-the-running-search-to-one-role ()
-  "The minibuffer is where a search is narrowed: a key cycles the role
-memex is asked for, the prompt names it, and the request carries it."
+(ert-deftest memex-search-asks-for-the-roles-a-query-is-put-to ()
+  "A search asks memex for the conversation by default: the request
+carries the set of roles, the index applies it, and the prompt names it."
   (unwind-protect
       (cl-letf (((symbol-function 'memex-api-search)
                  (memex-search-tests--stub-search)))
         (let ((memex-search-group-by-session nil)
-              (memex-search-role nil))
+              (memex-search-roles '("user" "assistant")))
           (memex-search-tests--drive 'lexical 'setup "alfa")
-          (should-not (plist-get (car (memex-search-tests--requests)) :role))
-          (should-not (string-match-p "\\[" (memex-search--prompt 'lexical)))
-          (let ((memex-search--asked-role "user"))
+          (should (equal (plist-get (car (memex-search-tests--requests)) :roles)
+                         '("user" "assistant")))
+          (should (string-match-p "\\[user\\+assistant\\]"
+                                  (memex-search--prompt 'lexical)))
+          (let ((memex-search--asked-roles nil))
             (memex-search-tests--cleanup)
             (memex-search-tests--drive 'lexical 'setup "alfa")
-            (should (equal (plist-get (car (memex-search-tests--requests)) :role)
-                           "user"))
-            (should (string-match-p "\\[user\\]"
-                                    (memex-search--prompt 'lexical))))))
+            (should-not (plist-get (car (memex-search-tests--requests)) :roles))
+            (should-not (string-match-p "\\[" (memex-search--prompt 'lexical))))))
     (memex-search-tests--cleanup)))
 
-(ert-deftest memex-search-cycles-the-role-from-every-one-and-back-out ()
-  "Nil leads the cycle: a search narrows from every role to the one wanted
-and widens to every role again after the last of them."
-  (should-not (memex-search--next-role "tool_result"))
-  (should (equal (memex-search--next-role nil) "user"))
-  (should (equal (memex-search--next-role "user") "assistant"))
+(ert-deftest memex-search-takes-a-set-of-roles-and-gives-it-back ()
+  "The set is chosen, not cycled: what was read restarts the search, an
+empty read asks for every role, and a restart carries the set along."
   (let ((memex-search--mode 'lexical)
         (memex-search-group-by-session nil)
-        (memex-search-role nil)
+        (memex-search-roles '("user" "assistant"))
         scheduled)
     (cl-letf (((symbol-function 'minibufferp) (lambda (&rest _) t))
               ((symbol-function 'minibuffer-contents-no-properties)
@@ -1026,21 +1023,31 @@ and widens to every role again after the last of them."
                (lambda (_time _repeat function &rest args)
                  (setq scheduled (cons function args))))
               ((symbol-function 'abort-recursive-edit) #'ignore))
-      (memex-search-cycle-role)
-      (should (equal scheduled
-                     '(memex-search--run lexical "alfa" nil nil "user")))
-      (let ((memex-search--asked-role "tool_result"))
-        (memex-search-cycle-role)
-        (should (equal (nth 5 scheduled) 'every))
+      (cl-letf (((symbol-function 'completing-read-multiple)
+                 (lambda (&rest _) '("tool_result"))))
+        (memex-search-select-roles)
+        (should (equal scheduled
+                       '(memex-search--run lexical "alfa" nil nil
+                                           ("tool_result")))))
+      (cl-letf (((symbol-function 'completing-read-multiple)
+                 (lambda (&rest _) nil)))
+        (memex-search-select-roles)
+        (should (equal (nth 5 scheduled) 'every)))
+      (memex-search-toggle-roles)
+      (should (equal (nth 5 scheduled) 'every))
+      (let ((memex-search--asked-roles nil))
+        (memex-search-toggle-roles)
+        (should (equal (nth 5 scheduled) '("user" "assistant")))
         (memex-search-cycle-mode)
-        (should (equal (nth 5 scheduled) "tool_result"))))))
+        (should (equal (nth 5 scheduled) 'every))))))
 
 (ert-deftest memex-search-narrows-from-the-minibuffer-or-not-at-all ()
   "A key in the search minibuffer is the only way to narrow one, so the
 map the search is read under carries them."
   (dolist (binding '(("M-m" . memex-search-cycle-mode)
                      ("M-g" . memex-search-toggle-grouping)
-                     ("M-r" . memex-search-cycle-role)
+                     ("M-r" . memex-search-select-roles)
+                     ("M-t" . memex-search-toggle-roles)
                      ("M-." . memex-search-in-selected-session)))
     (should (eq (keymap-lookup memex-search-map (car binding)) (cdr binding)))
     (should (commandp (cdr binding)))))
