@@ -967,5 +967,22 @@ miniwindow, which spans the frame whatever that window is doing."
       (when-let* ((buffer (get-buffer memex-search-preview-buffer-name)))
         (kill-buffer buffer)))))
 
+(ert-deftest memex-search-previews-only-where-the-reader-asks-for-one ()
+  "A preview renders a whole record, so the selection does not drag one
+along behind it: the search hands consult the key it waits for."
+  (let ((options nil))
+    (cl-letf (((symbol-function 'consult--async-pipeline) (lambda (&rest _) nil))
+              ((symbol-function 'consult--async-min-input) (lambda (&rest _) nil))
+              ((symbol-function 'consult--async-throttle) (lambda (&rest _) nil))
+              ((symbol-function 'consult--lookup-member) (lambda (&rest _) nil))
+              ((symbol-function 'consult--read)
+               (lambda (_table &rest rest) (setq options rest) nil)))
+      (memex-search--consult 'lexical "alfa")
+      (should (equal (plist-get options :preview-key) memex-search-preview-key))
+      (should (equal memex-search-preview-key "C-SPC"))
+      (let ((memex-search-preview-key 'any))
+        (memex-search--consult 'lexical "alfa")
+        (should (eq (plist-get options :preview-key) 'any))))))
+
 (provide 'memex-search-tests)
 ;;; memex-search-tests.el ends here

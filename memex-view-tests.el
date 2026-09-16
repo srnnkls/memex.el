@@ -226,6 +226,16 @@ duplicate suppression is measured the way the herdr bridge measures it."
                           source-path)))
             (memex-view-tests--viewer-buffers)))
 
+(defmacro memex-view-tests--showing-every-kind (&rest body)
+  "Run BODY with every kind of entry rendered whole.
+A transcript opens with its tool traffic out of the view, so a test whose
+subject is a call has to ask for one."
+  (declare (indent 0) (debug t))
+  `(let ((memex-view-initial-states
+          (mapcar (lambda (cell) (cons (car cell) 'show))
+                  memex-view-initial-states)))
+     ,@body))
+
 (defun memex-view-tests--open (records session-id source-path &optional doc-id)
   "Show RECORDS as SESSION-ID at SOURCE-PATH and return the viewer buffer.
 `memex-api-session' answers the viewer's one fetch with those RECORDS
@@ -576,7 +586,8 @@ finds it."
 
 (ert-deftest memex-view-navigation-moves-by-record-not-by-line ()
   (unwind-protect
-      (let* ((records (memex-view-tests--records))
+      (memex-view-tests--showing-every-kind
+       (let* ((records (memex-view-tests--records))
              (assistant (nth 1 records))
              (tool (nth 2 records))
              (buffer (memex-view-tests--open records
@@ -589,7 +600,7 @@ finds it."
             (should (memex-view-tests--starts-record-p tool))
             (should (> (line-number-at-pos) (1+ line))))
           (memex-view-previous-record)
-          (should (memex-view-tests--starts-record-p assistant))))
+          (should (memex-view-tests--starts-record-p assistant)))))
     (memex-view-tests--cleanup)))
 
 (ert-deftest memex-view-keeps-its-mode-on-a-transcript-of-very-long-lines ()
@@ -1064,7 +1075,8 @@ answers both or neither; an unclassed tool guesses at nothing."
   "The agent's turn carries a vendor mark and nobody else's does, so the
 mark rides inside the name rather than widening the line under it."
   (unwind-protect
-      (let* ((records (memex-view-tests--entry-records))
+      (memex-view-tests--showing-every-kind
+       (let* ((records (memex-view-tests--entry-records))
              (buffer (memex-view-tests--open records
                                              memex-view-tests--session-id
                                              memex-view-tests--source-path))
@@ -1078,21 +1090,22 @@ mark rides inside the name rather than widening the line under it."
             (push (current-column) columns)
             (goto-char (match-end 0)))
           (should (> (length columns) 1))
-          (should (equal (seq-uniq columns) (list (car columns))))))
+          (should (equal (seq-uniq columns) (list (car columns)))))))
     (memex-view-tests--cleanup)))
 
 (ert-deftest memex-view-moves-between-the-entries-that-went-wrong ()
   (unwind-protect
-      (let* ((records (memex-view-tests--entry-records "boom\nError: bad\n"))
-             (buffer (memex-view-tests--open records
-                                             memex-view-tests--session-id
-                                             memex-view-tests--source-path)))
-        (with-current-buffer buffer
-          (goto-char (point-min))
-          (memex-view-next-problem)
-          (should (eq (car (memex-entry-status
-                            (memex-view-entry-at-point)))
-                      'warn))))
+      (memex-view-tests--showing-every-kind
+        (let* ((records (memex-view-tests--entry-records "boom\nError: bad\n"))
+               (buffer (memex-view-tests--open records
+                                               memex-view-tests--session-id
+                                               memex-view-tests--source-path)))
+          (with-current-buffer buffer
+            (goto-char (point-min))
+            (memex-view-next-problem)
+            (should (eq (car (memex-entry-status
+                              (memex-view-entry-at-point)))
+                        'warn)))))
     (memex-view-tests--cleanup)))
 
 (ert-deftest memex-view-has-no-problem-to-move-to-when-nothing-went-wrong ()
@@ -1244,6 +1257,28 @@ what the harness injected is worth none."
                                        (memex-view--header-line))))))
     (memex-view-tests--cleanup)))
 
+(ert-deftest memex-view-puts-a-kind-in-and-out-of-the-view-at-one-key ()
+  "The three states are worth a menu; in or out is worth a single key."
+  (skip-unless (featurep 'magit-section))
+  (unwind-protect
+      (let ((buffer (memex-view-tests--open (memex-view-tests--records)
+                                            memex-view-tests--session-id
+                                            memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (should (eq (memex-view--state 'tool) 'hide))
+          (should (memq 'tool buffer-invisibility-spec))
+          (memex-view-toggle-tool)
+          (should (eq (memex-view--state 'tool) 'show))
+          (should-not (memq 'tool buffer-invisibility-spec))
+          (memex-view-toggle-tool)
+          (should (eq (memex-view--state 'tool) 'hide))
+          (memex-view-toggle-assistant)
+          (should (eq (memex-view--state 'assistant) 'hide))
+          (should (invisible-p (memex-view-tests--position-of
+                                "second line of beta")))
+          (should (eq (key-binding (kbd "T")) #'memex-view-toggle-tool))))
+    (memex-view-tests--cleanup)))
+
 (ert-deftest memex-view-moves-over-what-is-filtered-without-deleting-it ()
   "Filtering may not cost a search its reach, and may not strand `n' on
 an entry the reader cannot see."
@@ -1253,6 +1288,7 @@ an entry the reader cannot see."
                                             memex-view-tests--session-id
                                             memex-view-tests--source-path)))
         (with-current-buffer buffer
+          (memex-view--set-state 'tool 'collapse)
           (goto-char (point-min))
           (let ((reached nil))
             (while (ignore-errors (memex-view-next-record) t)
@@ -1357,19 +1393,20 @@ searched for, and a hit the reader cannot see is worth nothing."
 request and worth nobody's eye on every line of a session."
   (skip-unless (featurep 'magit-section))
   (unwind-protect
-      (let ((buffer (memex-view-tests--open (memex-view-tests--entry-records)
-                                            memex-view-tests--session-id
-                                            memex-view-tests--source-path)))
-        (with-current-buffer buffer
-          (let ((identifier (memex-view-tests--position-of "#8802")))
-            (should identifier)
-            (should (invisible-p identifier))
-            (should (memq 'detail buffer-invisibility-spec))
-            (memex-view-toggle-details)
-            (should-not (invisible-p identifier))
-            (should-not (memq 'detail buffer-invisibility-spec))
-            (memex-view-toggle-details)
-            (should (invisible-p identifier)))))
+      (memex-view-tests--showing-every-kind
+        (let ((buffer (memex-view-tests--open (memex-view-tests--entry-records)
+                                              memex-view-tests--session-id
+                                              memex-view-tests--source-path)))
+          (with-current-buffer buffer
+            (let ((identifier (memex-view-tests--position-of "#8802")))
+              (should identifier)
+              (should (invisible-p identifier))
+              (should (memq 'detail buffer-invisibility-spec))
+              (memex-view-toggle-details)
+              (should-not (invisible-p identifier))
+              (should-not (memq 'detail buffer-invisibility-spec))
+              (memex-view-toggle-details)
+              (should (invisible-p identifier))))))
     (memex-view-tests--cleanup)))
 
 (ert-deftest memex-view-record-buffer-draws-one-record-under-no-session ()

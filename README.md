@@ -76,7 +76,10 @@ terminal colors are removed from candidate text only.
 The margin carries how many hits a session row stands for and how long ago the
 record was written, right-aligned under Marginalia. With Consult, the
 highlighted candidate is drawn whole in `*memex preview*` — the excerpt in the
-row is a window into it — under `consult-preview-key`.
+row is a window into it — at `memex-search-preview-key`, `C-SPC` by default.
+Each preview renders a record, so the selection does not drag one along on its
+way to the row that was wanted; set the key to `any` for a preview that follows
+the selection.
 
 `memex-search-session-hit` chooses the session's opening match and excerpt:
 `newest` (default) or `best`. This selects among returned hits; it does not
@@ -160,13 +163,15 @@ line while you scroll through it, and a tool's input and output are fontified
 in the mode its tool and file path imply.
 
 A transcript opens on the conversation: what the person and the agent wrote is
-shown whole and laid on grounds of its own, the calls that carried it out are a
-heading each, and what the harness injected into somebody's turn — skill bodies,
-slash commands, file mentions, task notifications — is filtered out. `f` opens
-the transient that moves any of the four between whole, heading and gone; the
-header line names whatever is not whole. Filtering is `buffer-invisibility-spec`
-rather than a second render, so the text never leaves the buffer and a search
-still reaches it.
+shown whole and laid on grounds of its own, and both the calls that carried it
+out and what the harness injected into somebody's turn — skill bodies, slash
+commands, file mentions, task notifications — are out of the view until asked
+for. `U`, `A`, `T` and `S` put the person, the agent, the calls and the harness
+in or out at one key; `f` opens the transient that moves any of the four between
+whole, heading and gone. The header line names whatever is not whole and
+`memex-view-initial-states` sets what a transcript opens on. Filtering is
+`buffer-invisibility-spec` rather than a second render, so the text never leaves
+the buffer and a search still reaches it.
 
 Every heading is a glyph, a label and a description at fixed columns, so a run
 of entries reads down an edge rather than as a paragraph:

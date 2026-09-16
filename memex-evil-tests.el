@@ -51,6 +51,7 @@ merely bound is not enough - it has to be `commandp'.")
   (list #'memex-view-next-record
         #'memex-view-previous-record
         #'memex-view-search-in-session
+        #'memex-view-toggle-tool
         #'quit-window)
   "The viewer verbs evil normal state must reach in a session buffer.
 Motion is evil's own, and `memex-view-jump-to-hit' is the movement

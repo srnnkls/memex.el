@@ -39,12 +39,18 @@ and a previous element, since evil's `g n' and `g p' are match motions.
 The rest sit under evil's `g' prefix, which is where a mode's own verbs
 belong: `g TAB' folds a tool result, `g f' chooses what the transcript
 shows, `g s' searches the session, `g r' resumes it in herdr and `g Q'
-quits the viewer."
+quits the viewer.  `g U', `g A', `g T' and `g S' put one kind of entry in
+or out of the view, taking evil's `g' prefix rather than the bare keys
+the viewer binds them on, which normal state spends on its own verbs."
   (evil-define-key* 'normal memex-session-mode-map
                     (kbd "M-n") #'memex-view-next-record
                     (kbd "M-p") #'memex-view-previous-record
                     (kbd "g TAB") #'memex-view-toggle-tool-content
                     (kbd "g f") #'memex-view-filter
+                    (kbd "g U") #'memex-view-toggle-human
+                    (kbd "g A") #'memex-view-toggle-assistant
+                    (kbd "g T") #'memex-view-toggle-tool
+                    (kbd "g S") #'memex-view-toggle-system
                     (kbd "g s") #'memex-view-search-in-session
                     (kbd "g r") #'memex-herdr-resume
                     (kbd "g a") #'memex-anchor-show

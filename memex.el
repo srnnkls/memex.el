@@ -71,6 +71,14 @@ waiting longer for the typing to settle than a lexical round trip is."
   :type 'number
   :group 'memex)
 
+(defcustom memex-search-preview-key "C-SPC"
+  "Key the search draws the highlighted candidate at, or `any' for every one.
+Each preview renders a whole record, so a preview that follows the
+selection pays that for every candidate the point passes over on its way
+to the one that was wanted."
+  :type '(choice (const :tag "Every selection" any) key)
+  :group 'memex)
+
 (defcustom memex-search-group-by-session t
   "Whether a search answers with one candidate per session.
 Four fifths of the index is tool traffic, so a record-level answer is
@@ -521,6 +529,7 @@ reporting the kill as a transport failure on every keystroke."
                      :category 'memex-record
                      :annotate #'memex-search--annotate
                      :state (memex-search--state)
+                     :preview-key memex-search-preview-key
                      :lookup #'consult--lookup-member
                      :keymap memex-search-map
                      :require-match t

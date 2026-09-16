@@ -141,12 +141,13 @@ meaning anything."
   :group 'memex)
 
 (defcustom memex-view-initial-states
-  '((human . show) (assistant . show) (tool . collapse) (system . hide))
+  '((human . show) (assistant . show) (tool . hide) (system . hide))
   "How much of each kind of entry a transcript opens showing.
 `show' renders the entry whole, `collapse' leaves its heading and folds
 the rest away, `hide' takes it out of the buffer's view altogether.  A
-session is read for the conversation in it, and the calls that carried
-the conversation out are worth a line each until one is asked for."
+session is read for the conversation in it; the calls that carried the
+conversation out stay out of the buffer until `memex-view-toggle-tool'
+asks for them."
   :type '(alist :key-type (choice (const human) (const assistant)
                                   (const tool) (const system))
                 :value-type (choice (const :tag "Whole" show)
@@ -849,6 +850,23 @@ dropping it would unfold every section in the buffer."
 (memex-view--define-cycle tool)
 (memex-view--define-cycle system)
 
+(defmacro memex-view--define-toggle (kind)
+  "Define the command showing or hiding every KIND entry at one key.
+The three states are worth a menu; putting a kind in or out of the buffer
+is the move a reader makes over and over, and it is bound on its own."
+  (let ((name (intern (format "memex-view-toggle-%s" kind))))
+    `(defun ,name ()
+       ,(format "Show every %s entry whole, or take them out of the view." kind)
+       (interactive)
+       (memex-view--set-state
+        ',kind (if (eq (memex-view--state ',kind) 'hide) 'show 'hide))
+       (message "memex: %s %s" ',kind (memex-view--state ',kind)))))
+
+(memex-view--define-toggle human)
+(memex-view--define-toggle assistant)
+(memex-view--define-toggle tool)
+(memex-view--define-toggle system)
+
 (transient-define-suffix memex-view-show-everything ()
   "Show every kind of entry whole."
   :transient t
@@ -1242,6 +1260,10 @@ that process is what `memex-cancel-rpc' takes."
   "d" #'memex-view-toggle-details
   "e" #'memex-view-next-problem
   "f" #'memex-view-filter
+  "U" #'memex-view-toggle-human
+  "A" #'memex-view-toggle-assistant
+  "T" #'memex-view-toggle-tool
+  "S" #'memex-view-toggle-system
   "w" #'memex-view-copy-command
   "RET" #'memex-view-visit-payload
   "M-e" #'memex-view-previous-problem
