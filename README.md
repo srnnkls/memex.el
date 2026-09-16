@@ -185,7 +185,10 @@ heading each, and what the harness injected into somebody's turn — skill bodie
 slash commands, file mentions, task notifications — is filtered out. `U`, `A`,
 `T` and `S` ask for the person, the agent, the calls or the harness whole and put
 them back as they opened; `f` opens the transient that moves any of the four
-between whole, heading and gone. The header line names whatever is not whole and
+between whole, heading and gone. Under evil these are `g U`, `g A`, `g T`, `g S`
+and `g f`, since normal state spends the bare keys on its own verbs — load
+`memex-evil.el` and every viewer key is under `g`. The header line names
+whatever is not whole and
 `memex-view-initial-states` sets what a transcript opens on. Filtering is
 `buffer-invisibility-spec` rather than a second render, so the text never leaves
 the buffer and a search still reaches it.
