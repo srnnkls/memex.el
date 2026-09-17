@@ -319,6 +319,33 @@ finds it."
            records)))
     (memex-view-tests--cleanup)))
 
+(ert-deftest memex-view-renders-the-prose-of-a-chunk-as-it-is-drawn ()
+  "Rendering markdown is what an open costs: a session of thousands of
+records measured 22 seconds rendering them all before the first chunk,
+and under two rendering the chunk alone."
+  (unwind-protect
+      (let* ((memex-view-chunk-size 2)
+             (rendered nil)
+             (buffer (cl-letf* ((render (symbol-function 'lectio-render-all))
+                                ((symbol-function 'lectio-render-all)
+                                 (lambda (markdowns &rest rest)
+                                   (push (seq-count #'identity markdowns) rendered)
+                                   (apply render markdowns rest))))
+                       (prog1 (memex-view-tests--open
+                               (memex-view-tests--records)
+                               memex-view-tests--session-id
+                               memex-view-tests--source-path)
+                         (should (equal rendered '(1)))
+                         (with-current-buffer
+                             (memex-view-tests--session-buffer
+                              memex-view-tests--session-id
+                              memex-view-tests--source-path)
+                           (memex-view--fill-completely))
+                         (should (equal (apply #'+ rendered) 3))))))
+        (with-current-buffer buffer
+          (should (memex-view-tests--position-of "second line of beta"))))
+    (memex-view-tests--cleanup)))
+
 (ert-deftest memex-view-draws-the-tail-of-a-session-before-the-rest ()
   (unwind-protect
       (let* ((memex-view-chunk-size 2)

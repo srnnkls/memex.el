@@ -181,7 +181,9 @@ what it starts as and what `memex-view-filter' changes.")
   "How many entries of this buffer's transcript reported something wrong.")
 
 (defvar-local memex-view--pending nil
-  "Pending entries and texts, both newest first, as (ENTRIES . TEXTS).")
+  "The entries not yet drawn, newest first.
+Their prose is rendered as each chunk is drawn, not ahead of it: what is
+rendered before the first chunk is what the reader waits for.")
 
 (defvar-local memex-view--fill-timer nil
   "The timer drawing what is left of this buffer's transcript.")
@@ -951,9 +953,9 @@ message twice."
 
 (defun memex-view--texts (records)
   "Return the text each of RECORDS is drawn as, in order.
-The prose goes through one markdown conversion for the whole session:
-pandoc costs the same for a session as for a record of it, so a
-conversion per record would take minutes over a long transcript."
+This is the cost of opening a transcript: rendering a chunk of 200
+records of a long session measured near two seconds, and every record
+of it ten times that, so it is paid per chunk as each is drawn."
   (let* ((cleaned (mapcar (lambda (record)
                             (memex-view--clean (alist-get 'text record)))
                           records))
@@ -1343,12 +1345,13 @@ buffer the user is in and erase it."
 
 (defun memex-view--fill-chunk ()
   "Prepend the next older chunk and return the entries still pending."
-  (pcase-let ((`(,entries . ,texts) memex-view--pending))
+  (let ((entries memex-view--pending))
     (when entries
       (let* ((inhibit-read-only t)
              (root magit-root-section)
              (children (oref root children))
              (take (min (max 1 memex-view-chunk-size) (length entries)))
+             (chunk (nreverse (seq-take entries take)))
              (position (copy-marker (point) t))
              (windows (mapcar
                        (lambda (window)
@@ -1365,11 +1368,10 @@ buffer the user is in and erase it."
               (oset root children nil)
               (goto-char (point-min))
               (seq-mapn #'memex-view--insert-record
-                        (nreverse (seq-take entries take))
-                        (nreverse (seq-take texts take)))
+                        chunk
+                        (memex-view--texts (mapcar #'memex-entry-call chunk)))
               (memex-view--fold (oref root children))
-              (setq-local memex-view--pending
-                          (cons (nthcdr take entries) (nthcdr take texts)))
+              (setq-local memex-view--pending (nthcdr take entries))
               (set-buffer-modified-p nil)
               (force-mode-line-update))
           (oset root children (nconc (oref root children) children))
@@ -1385,7 +1387,7 @@ buffer the user is in and erase it."
               (set-window-vscroll window vscroll t))
             (set-marker start nil)
             (set-marker point nil))))))
-  (car memex-view--pending))
+  memex-view--pending)
 
 (defun memex-view-follow-end ()
   "Move to the last visible record's heading."
@@ -1435,15 +1437,14 @@ one session shares it."
       (setq-local memex-view--problems 0)
       (let* ((entries (memex-entry-pair records))
              (memex-entry--fields-cache (make-hash-table :test #'eq))
-             (texts (memex-view--texts (mapcar #'memex-entry-call entries)))
              (older (max 0 (- (length entries) (max 1 memex-view-chunk-size))))
+             (tail (nthcdr older entries))
              (magit-insert-section--parent nil))
         (magit-insert-section (memex-view-transcript-section session-id)
           (seq-mapn #'memex-view--insert-record
-                    (nthcdr older entries) (nthcdr older texts)))
-        (setq-local memex-view--pending
-                    (cons (nreverse (seq-take entries older))
-                          (nreverse (seq-take texts older))))
+                    tail
+                    (memex-view--texts (mapcar #'memex-entry-call tail))))
+        (setq-local memex-view--pending (nreverse (seq-take entries older)))
         (memex-view--apply-states))
       (set-buffer-modified-p nil)
       (goto-char (point-min))
@@ -1456,10 +1457,8 @@ The buffer keys no session, so `memex-view-session-buffer' never answers
 with it and the next open of the session RECORD belongs to renders
 elsewhere rather than over it.
 
-The prose goes up as it was written: `memex-view--texts' is what runs a
-transcript through pandoc, and a caller rendering one record at a time -
-a preview under a moving selection - would pay for a subprocess per
-record."
+The prose goes up as it was written: a preview under a moving selection
+is looked at for a moment, and rendering markdown is what an open costs."
   (let ((buffer (get-buffer-create name)))
     (with-current-buffer buffer
       (let ((inhibit-read-only t))
