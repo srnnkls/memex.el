@@ -319,10 +319,32 @@ finds it."
            records)))
     (memex-view-tests--cleanup)))
 
+(ert-deftest memex-view-shows-a-pasted-transcript-as-it-was-written ()
+  "A message past `memex-view-markdown-limit' goes up as it was written."
+  (unwind-protect
+      (let* ((memex-view-markdown-limit 100)
+             (short (memex-view-tests--record
+                     :doc-id 8911 :ts 1787671118000 :source "codex"
+                     :project "memex.el" :session-id memex-view-tests--session-id
+                     :turn-id 7410 :role "user" :text "a **short** ask"
+                     :source-path memex-view-tests--source-path))
+             (long (memex-view-tests--record
+                    :doc-id 8912 :ts 1787671118100 :source "codex"
+                    :project "memex.el" :session-id memex-view-tests--session-id
+                    :turn-id 7411 :role "user"
+                    :text (concat "a **long** paste " (make-string 200 ?x))
+                    :source-path memex-view-tests--source-path))
+             (buffer (memex-view-tests--open (list short long)
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (should-not (memex-view-tests--position-of "**short**"))
+          (should (memex-view-tests--position-of "short"))
+          (should (memex-view-tests--position-of "**long**"))))
+    (memex-view-tests--cleanup)))
+
 (ert-deftest memex-view-renders-the-prose-of-a-chunk-as-it-is-drawn ()
-  "Rendering markdown is what an open costs: a session of thousands of
-records measured 22 seconds rendering them all before the first chunk,
-and under two rendering the chunk alone."
+  "The first chunk goes up before the markdown of the rest is rendered."
   (unwind-protect
       (let* ((memex-view-chunk-size 2)
              (rendered nil)

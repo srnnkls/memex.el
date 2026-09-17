@@ -182,8 +182,7 @@ what it starts as and what `memex-view-filter' changes.")
 
 (defvar-local memex-view--pending nil
   "The entries not yet drawn, newest first.
-Their prose is rendered as each chunk is drawn, not ahead of it: what is
-rendered before the first chunk is what the reader waits for.")
+Their prose is rendered as each chunk is drawn, not ahead of it.")
 
 (defvar-local memex-view--fill-timer nil
   "The timer drawing what is left of this buffer's transcript.")
@@ -947,15 +946,21 @@ message twice."
                         (and (memex-entry-tool entry)
                              (memex-entry-description entry)))))
 
+(defcustom memex-view-markdown-limit 20000
+  "Longest message rendered as markdown, in characters.
+Past this the text is shown as it was written: a message that long is a
+transcript or a file pasted into somebody's turn."
+  :type 'natnum
+  :group 'memex)
+
 (defun memex-view--markdown-p (record)
   "Return non-nil when RECORD's text is markdown rather than terminal output."
-  (member (alist-get 'role record) memex-view-markdown-roles))
+  (and (member (alist-get 'role record) memex-view-markdown-roles)
+       (<= (length (or (alist-get 'text record) "")) memex-view-markdown-limit)))
 
 (defun memex-view--texts (records)
   "Return the text each of RECORDS is drawn as, in order.
-This is the cost of opening a transcript: rendering a chunk of 200
-records of a long session measured near two seconds, and every record
-of it ten times that, so it is paid per chunk as each is drawn."
+Called per chunk as each is drawn, never over the whole session."
   (let* ((cleaned (mapcar (lambda (record)
                             (memex-view--clean (alist-get 'text record)))
                           records))
