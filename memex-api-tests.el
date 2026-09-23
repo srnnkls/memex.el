@@ -28,6 +28,7 @@
     memex-api-search
     memex-api-recent
     memex-api-sessions
+    memex-api-session-count
     memex-api-session
     memex-api-show
     memex-api-session-page
@@ -220,6 +221,10 @@ TIMEOUT bounds the wait.  See `memex-api-tests--exchange-with'."
    (list "recent"
          (memex-api-tests--records-response)
          (lambda (cb eb) (memex-api-recent cb :errback eb)))
+   (list "session_count"
+         (memex-api-tests--response
+          "session_count" '(count . ((total . 8180))))
+         (lambda (cb eb) (memex-api-session-count cb :errback eb)))
    (list "session"
          (memex-api-tests--response
           "session" '(context . ((records . []) (cwd . :null))))
@@ -267,7 +272,7 @@ TIMEOUT bounds the wait.  See `memex-api-tests--exchange-with'."
          (lambda (cb eb) (memex-api-session-activity cb :errback eb)))))
 
 (ert-deftest memex-api-defines-a-non-interactive-wrapper-per-operation ()
-  (should (equal (length memex-api-tests--wrappers) 12))
+  (should (equal (length memex-api-tests--wrappers) 13))
   (dolist (wrapper memex-api-tests--wrappers)
     (should (fboundp wrapper))
     (should-not (commandp wrapper))))
@@ -1004,6 +1009,58 @@ null instead, which is why they are not built with `memex-api--fields'."
 (ert-deftest memex-api-sessions-refuses-a-limit-memex-will-not-serve ()
   (should-error (memex-api-sessions #'ignore :limit 501)
                 :type 'memex-api-limit-error))
+
+(ert-deftest memex-api-session-count-sends-its-narrowing-fields-even-unset ()
+  (unwind-protect
+      (let* ((stub (memex-api-tests--recording-stub
+                    (memex-api-tests--response
+                     "session_count" '(count . ((total . 0))))))
+             (exchange (memex-api-tests--exchange-with
+                        stub (lambda (cb eb) (memex-api-session-count cb :errback eb))))
+             (request (alist-get 'request (memex-api-tests--sent exchange))))
+        (should-not (plist-get exchange :error))
+        (dolist (field '(cwd project source since))
+          (should (eq :null (alist-get field request))))
+        (should-not (alist-get 'limit request))
+        (should-not (alist-get 'session_id request)))
+    (memex-api-tests--cleanup)))
+
+(ert-deftest memex-api-session-count-narrows-by-what-it-was-given ()
+  (unwind-protect
+      (let* ((stub (memex-api-tests--recording-stub
+                    (memex-api-tests--response
+                     "session_count" '(count . ((total . 347))))))
+             (exchange (memex-api-tests--exchange-with
+                        stub
+                        (lambda (cb eb)
+                          (memex-api-session-count cb :errback eb
+                                                    :session-id "s1"
+                                                    :cwd "/tmp/proj"
+                                                    :project "memex"
+                                                    :source "claude"
+                                                    :since "2026-01-01"
+                                                    :origin 'all))))
+             (request (alist-get 'request (memex-api-tests--sent exchange))))
+        (should-not (plist-get exchange :error))
+        (should (equal "s1" (alist-get 'session_id request)))
+        (should (equal "/tmp/proj" (alist-get 'cwd request)))
+        (should (equal "memex" (alist-get 'project request)))
+        (should (equal "claude" (alist-get 'source request)))
+        (should (equal "2026-01-01" (alist-get 'since request)))
+        (should (equal "all" (alist-get 'origin request)))
+        (should (equal 347 (plist-get exchange :payload))))
+    (memex-api-tests--cleanup)))
+
+(ert-deftest memex-api-session-count-hands-nil-when-memex-cannot-count-exactly ()
+  (unwind-protect
+      (let ((exchange (memex-api-tests--exchange
+                       (memex-api-tests--response
+                        "session_count"
+                        '(count . ((total . :null) (reason . "canonical session metadata incomplete"))))
+                       (lambda (cb eb) (memex-api-session-count cb :errback eb)))))
+        (should-not (plist-get exchange :error))
+        (should-not (plist-get exchange :payload)))
+    (memex-api-tests--cleanup)))
 
 (provide 'memex-api-tests)
 ;;; memex-api-tests.el ends here

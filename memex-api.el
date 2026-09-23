@@ -229,6 +229,31 @@ key, so a caller wanting another order sorts what it gets."
                         (cons 'since (or since :null))))))
      callback errback)))
 
+(cl-defun memex-api-session-count (callback
+                                   &key errback session-id source-path
+                                   cwd project source since origin)
+  "Hand the exact number of sessions matching the filters to CALLBACK.
+CALLBACK receives an integer, or nil when memex cannot count them
+exactly.  ERRBACK receives the error object instead when the request
+fails.
+
+SESSION-ID, SOURCE-PATH, CWD, PROJECT, SOURCE, SINCE and ORIGIN narrow
+the count exactly as they narrow `memex-api-sessions', unbounded by
+any limit."
+  (memex-api--call
+   "session_count" 'count
+   (list (cons 'request
+               (append
+                (memex-api--fields (cons 'session_id session-id)
+                                   (cons 'source_path source-path)
+                                   (cons 'origin origin))
+                (list (cons 'cwd (or cwd :null))
+                      (cons 'project (or project :null))
+                      (cons 'source (or source :null))
+                      (cons 'since (or since :null))))))
+   (lambda (count) (funcall callback (alist-get 'total count)))
+   errback))
+
 (cl-defun memex-api-session (session-id source-path callback &key errback)
   "Hand the whole session SESSION-ID at SOURCE-PATH to CALLBACK.
 CALLBACK receives the session context alist, whose `records' holds
