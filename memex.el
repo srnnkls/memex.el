@@ -74,9 +74,9 @@ waiting longer for the typing to settle than a lexical round trip is."
 
 (defcustom memex-search-preview-key "C-SPC"
   "Key the search draws the highlighted candidate at, or `any' for every one.
-Each preview fetches and renders a whole session, so a preview that
-follows the selection pays that for every candidate the point passes over
-on its way to the one that was wanted."
+Each preview fetches a whole session, so a preview that follows the
+selection pays that for every session the point passes over on its way
+to the one that was wanted."
   :type '(choice (const :tag "Every selection" any) key)
   :group 'memex)
 
@@ -394,67 +394,105 @@ when it is not, which is the fork `memex-org-follow' takes."
              (alist-get 'doc_id record)))
   record)
 
+(defcustom memex-search-preview-context 25
+  "Records a preview draws on each side of the hit.
+A session can run to thousands of records and drawing all of them takes
+seconds, while a preview is looked at for a moment around one message;
+opening the hit still reads the whole session."
+  :type 'natnum
+  :group 'memex)
+
+(defconst memex-search-preview-buffer-name "*memex preview*"
+  "Name of the buffer the highlighted hit's session is drawn in.")
+
 (defvar memex-search--preview-state nil
   "What the running search's preview took over, or nil before one.
 A plist: `:window' the preview draws in, `:buffer', `:start' and
-`:point' it showed before, `:created' the viewer buffers opened for the
-preview alone, and `:token' naming the preview whose session may still
-land in the window.")
+`:point' it showed before, `:sessions' the session contexts fetched so
+far keyed by session and source, and `:token' naming the newest preview,
+the only one whose session may still land in the window.")
+
+(defun memex-search--preview-slice (context doc-id)
+  "Return CONTEXT with its records cut to those around the record DOC-ID."
+  (let* ((records (alist-get 'records context))
+         (index (or (seq-position records doc-id
+                                  (lambda (record id)
+                                    (equal (alist-get 'doc_id record) id)))
+                    (1- (length records))))
+         (from (max 0 (- index memex-search-preview-context)))
+         (slice (copy-alist context)))
+    (setf (alist-get 'records slice)
+          (seq-subseq records from
+                      (min (length records)
+                           (+ index memex-search-preview-context 1))))
+    slice))
+
+(defun memex-search--preview-show (record context token)
+  "Draw CONTEXT around RECORD in the preview window if TOKEN is newest."
+  (let ((window (plist-get memex-search--preview-state :window))
+        (doc-id (alist-get 'doc_id record)))
+    (when (and (eq token (plist-get memex-search--preview-state :token))
+               (window-live-p window))
+      (let ((buffer (get-buffer-create memex-search-preview-buffer-name)))
+        (with-current-buffer buffer (buffer-disable-undo))
+        (memex-view--render buffer (memex-search--preview-slice context doc-id)
+                            nil nil)
+        (set-window-buffer window buffer)
+        (with-current-buffer buffer
+          (when-let* ((position (memex-view--record-position doc-id)))
+            (memex-view--goto-position position)
+            (with-selected-window window (recenter))))))))
 
 (defun memex-search--preview (candidate)
-  "Show the session CANDIDATE's record belongs to at that record.
+  "Show the session CANDIDATE's record belongs to, around that record.
 The session goes up in the window the search was called from, the way
 `consult-buffer' previews, since consult calls a state function with
-that window selected.  The session arrives later than the selection
-moves, so only the newest preview's session is let into the window.  A
-session that cannot be fetched leaves the search running and says why:
-the preview is beside the work, not the work."
+that window selected.  A session is fetched once per search and drawn
+only around the hit.  It arrives later than the selection moves, so
+only the newest preview's session is let into the window.  A session
+that cannot be fetched leaves the search running and says why: the
+preview is beside the work, not the work."
   (when-let* ((record (and (stringp candidate)
                            (memex-completion-record-of candidate))))
-    (let* ((window (or (plist-get memex-search--preview-state :window)
-                       (selected-window)))
-           (session-id (alist-get 'session_id record))
-           (source-path (alist-get 'source_path record))
-           (open (memex-view-session-buffer session-id source-path))
+    (let* ((window (selected-window))
+           (key (cons (alist-get 'session_id record)
+                      (alist-get 'source_path record)))
            (token (list record)))
       (unless memex-search--preview-state
         (setq memex-search--preview-state
               (list :window window
                     :buffer (window-buffer window)
                     :start (window-start window)
-                    :point (window-point window))))
+                    :point (window-point window)
+                    :sessions (make-hash-table :test #'equal))))
       (setq memex-search--preview-state
             (plist-put memex-search--preview-state :token token))
-      (condition-case failure
-          (memex-view-session
-           session-id source-path (alist-get 'doc_id record)
-           (lambda (buffer)
-             (unless (or open
-                         (memq buffer (plist-get memex-search--preview-state :created)))
-               (setq memex-search--preview-state
-                     (plist-put memex-search--preview-state :created
-                                (cons buffer (plist-get memex-search--preview-state
-                                                        :created)))))
-             (when (and (eq token (plist-get memex-search--preview-state :token))
-                        (window-live-p window))
-               (set-window-buffer window buffer))))
-        (error (message "memex preview: %s" (error-message-string failure)))))))
+      (let ((sessions (plist-get memex-search--preview-state :sessions)))
+        (if-let* ((context (gethash key sessions)))
+            (memex-search--preview-show record context token)
+          (condition-case failure
+              (memex-api-session
+               (car key) (cdr key)
+               (lambda (context)
+                 (puthash key context sessions)
+                 (memex-search--preview-show record context token))
+               :errback (lambda (failure)
+                          (message "memex preview: %s"
+                                   (error-message-string failure))))
+            (error (message "memex preview: %s"
+                            (error-message-string failure)))))))))
 
 (defun memex-search--reset-preview ()
-  "Give the preview's window back what it showed and drop what it opened.
-A session opened only to be previewed is killed; one that was already
-open stays, as `consult-buffer' keeps the buffers it did not create."
+  "Give the preview's window back what it showed and drop the preview."
   (when memex-search--preview-state
     (let ((window (plist-get memex-search--preview-state :window))
           (buffer (plist-get memex-search--preview-state :buffer)))
       (when (and (window-live-p window) (buffer-live-p buffer))
         (set-window-buffer window buffer)
         (set-window-start window (plist-get memex-search--preview-state :start) t)
-        (set-window-point window (plist-get memex-search--preview-state :point)))
-      (mapc (lambda (created)
-              (when (buffer-live-p created)
-                (kill-buffer created)))
-            (plist-get memex-search--preview-state :created)))
+        (set-window-point window (plist-get memex-search--preview-state :point))))
+    (when-let* ((preview (get-buffer memex-search-preview-buffer-name)))
+      (kill-buffer preview))
     (setq memex-search--preview-state nil)))
 
 (defun memex-search--state ()

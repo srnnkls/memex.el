@@ -946,23 +946,24 @@ miniwindow, which spans the frame whatever that window is doing."
                      (window-width (minibuffer-window)))))
       (delete-window side))))
 
-(defmacro memex-search-tests--with-sessions (displays &rest body)
-  "Run BODY with `memex-view-session' queuing its DISPLAY calls in DISPLAYS.
-Each queued entry is (DOC-ID . THUNK); calling THUNK hands DISPLAY a
-fresh viewer buffer, the way the session's fetch answers later."
+(defun memex-search-tests--session (count)
+  "Return a session context of COUNT records numbered from 8000."
+  (list (cons 'records
+              (mapcar (lambda (n)
+                        (memex-search-tests--record (+ 8000 n) "memex.el"
+                                                    (format "record %d" n)))
+                      (number-sequence 0 (1- count))))))
+
+(defmacro memex-search-tests--with-fetches (fetches &rest body)
+  "Run BODY with `memex-api-session' queuing its callbacks in FETCHES.
+Each entry is (SESSION-ID . CALLBACK); the test answers it later, the
+way memex answers a session."
   (declare (indent 1))
   `(let ((memex-search--preview-state nil))
-     (cl-letf (((symbol-function 'memex-view-session)
-                (lambda (session-id _source-path doc-id display)
-                  (setq ,displays
-                        (append ,displays
-                                (list (cons doc-id
-                                            (lambda ()
-                                              (let ((buffer (generate-new-buffer
-                                                             (format "*memex session %s*"
-                                                                     session-id))))
-                                                (funcall display buffer)
-                                                buffer)))))))))
+     (cl-letf (((symbol-function 'memex-api-session)
+                (lambda (session-id _source-path callback &rest _)
+                  (setq ,fetches (append ,fetches
+                                         (list (cons session-id callback)))))))
        ,@body)))
 
 (defun memex-search-tests--candidate (doc-id)
@@ -972,64 +973,76 @@ fresh viewer buffer, the way the session's fetch answers later."
           (list (list 1.0 (memex-search-tests--record doc-id "memex.el" "hit")))
           "hit"))))
 
-(ert-deftest memex-search-preview-shows-the-session-in-the-calling-window ()
+(ert-deftest memex-search-preview-shows-the-hit-in-the-calling-window ()
   "A preview puts the hit's session in the window the search came from,
-at the hit, and the window gets its buffer back when the search ends."
+drawn around the hit with point on it, and the window gets its buffer
+back when the search ends."
+  (skip-unless (featurep 'magit-section))
   (let ((origin (get-buffer-create "*memex-search-tests origin*"))
-        (displays nil))
+        (memex-search-preview-context 3)
+        (fetches nil))
     (unwind-protect
         (save-window-excursion
           (switch-to-buffer origin)
-          (memex-search-tests--with-sessions displays
-            (memex-search--preview (memex-search-tests--candidate 7801))
-            (should (equal (caar displays) 7801))
-            (let ((session (funcall (cdar displays))))
-              (should (eq (window-buffer (selected-window)) session))
+          (memex-search-tests--with-fetches fetches
+            (memex-search--preview (memex-search-tests--candidate 8050))
+            (funcall (cdar fetches) (memex-search-tests--session 100))
+            (let ((preview (window-buffer (selected-window))))
+              (should (equal (buffer-name preview) memex-search-preview-buffer-name))
+              (with-current-buffer preview
+                (should (equal (alist-get 'doc_id (memex-view-record-at-point)) 8050))
+                (should (string-match-p "record 47" (buffer-string)))
+                (should-not (string-match-p "record 46\\b" (buffer-string)))
+                (should-not (string-match-p "record 54" (buffer-string))))
               (funcall (memex-search--state) 'exit nil)
               (should (eq (window-buffer (selected-window)) origin))
-              (should-not (buffer-live-p session)))))
+              (should-not (buffer-live-p preview)))))
+      (kill-buffer origin))))
+
+(ert-deftest memex-search-preview-fetches-a-session-once-per-search ()
+  "Moving between hits of one session draws from the session fetched first."
+  (skip-unless (featurep 'magit-section))
+  (let ((origin (get-buffer-create "*memex-search-tests origin*"))
+        (fetches nil))
+    (unwind-protect
+        (save-window-excursion
+          (switch-to-buffer origin)
+          (memex-search-tests--with-fetches fetches
+            (memex-search--preview (memex-search-tests--candidate 8010))
+            (funcall (cdar fetches) (memex-search-tests--session 20))
+            (memex-search--preview (memex-search-tests--candidate 8015))
+            (should (= (length fetches) 1))
+            (with-current-buffer (window-buffer (selected-window))
+              (should (equal (alist-get 'doc_id (memex-view-record-at-point)) 8015)))
+            (funcall (memex-search--state) 'exit nil)))
       (kill-buffer origin))))
 
 (ert-deftest memex-search-preview-lets-only-the-newest-session-in ()
   "A session answering after the selection moved on stays out of the window."
+  (skip-unless (featurep 'magit-section))
   (let ((origin (get-buffer-create "*memex-search-tests origin*"))
-        (displays nil))
+        (fetches nil))
     (unwind-protect
         (save-window-excursion
           (switch-to-buffer origin)
-          (memex-search-tests--with-sessions displays
-            (memex-search--preview (memex-search-tests--candidate 7802))
-            (memex-search--preview (memex-search-tests--candidate 7803))
-            (let* ((newest (funcall (cdr (nth 1 displays))))
-                   (stale (funcall (cdr (nth 0 displays)))))
-              (should (eq (window-buffer (selected-window)) newest))
-              (funcall (memex-search--state) 'preview nil)
-              (should (eq (window-buffer (selected-window)) origin))
-              (should-not (buffer-live-p newest))
-              (should-not (buffer-live-p stale)))))
+          (memex-search-tests--with-fetches fetches
+            (memex-search--preview (memex-search-tests--candidate 8002))
+            (cl-letf (((symbol-function 'memex-search-tests--record)
+                       (let ((original (symbol-function 'memex-search-tests--record)))
+                         (lambda (doc-id project text)
+                           (let ((record (funcall original doc-id project text)))
+                             (setf (alist-get 'session_id record) "s-other")
+                             record)))))
+              (memex-search--preview (memex-search-tests--candidate 8003)))
+            (should (= (length fetches) 2))
+            (funcall (cdr (nth 0 fetches)) (memex-search-tests--session 10))
+            (should (eq (window-buffer (selected-window)) origin))
+            (funcall (cdr (nth 1 fetches)) (memex-search-tests--session 10))
+            (with-current-buffer (window-buffer (selected-window))
+              (should (equal (alist-get 'doc_id (memex-view-record-at-point)) 8003)))
+            (funcall (memex-search--state) 'preview nil)
+            (should (eq (window-buffer (selected-window)) origin))))
       (kill-buffer origin))))
-
-(ert-deftest memex-search-preview-keeps-a-session-that-was-already-open ()
-  "Ending the search kills only the sessions its preview opened."
-  (let ((origin (get-buffer-create "*memex-search-tests origin*"))
-        (open (get-buffer-create "*memex-search-tests open*"))
-        (displays nil))
-    (unwind-protect
-        (save-window-excursion
-          (switch-to-buffer origin)
-          (memex-search-tests--with-sessions displays
-            (cl-letf (((symbol-function 'memex-view-session-buffer)
-                       (lambda (&rest _) open))
-                      ((symbol-function 'memex-view-session)
-                       (lambda (_session-id _source-path _doc-id display)
-                         (funcall display open))))
-              (memex-search--preview (memex-search-tests--candidate 7804))
-              (should (eq (window-buffer (selected-window)) open))
-              (funcall (memex-search--state) 'exit nil)
-              (should (eq (window-buffer (selected-window)) origin))
-              (should (buffer-live-p open)))))
-      (kill-buffer origin)
-      (kill-buffer open))))
 
 (ert-deftest memex-search-previews-only-where-the-reader-asks-for-one ()
   "A preview renders a whole record, so the selection does not drag one
