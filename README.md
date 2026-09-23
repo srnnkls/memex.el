@@ -61,7 +61,7 @@ is active:
 | --- | --- |
 | `M-m` | Cycle lexical, semantic and hybrid retrieval |
 | `M-g` | Switch between matching messages and sessions |
-| `M-r` | Choose the set of roles to ask for |
+| `M-r` | Put roles in or out of the search at one key each |
 | `M-t` | Ask for every role, or go back to the chosen set |
 | `M-.` | Search the messages of the selected candidate's session |
 
@@ -72,8 +72,10 @@ the session scope and the roles. The prompt names every narrowing in force, so
 `memex-search-roles` is the set a search starts from, `("user" "assistant")` by
 default: four fifths of the index is tool traffic, and a query is nearly always
 put to the conversation rather than to the calls that carried it out. `M-r`
-reads the set — an empty answer asks for every role — and `M-t` swings between
-the set and all of it. memex takes the roles as a set and applies them in the
+opens a menu with a key per role — `u` user, `a` assistant, `c` tool_use,
+`r` tool_result — that stays up while the set is put together; `SPC` takes every
+role, `DEL` goes back to `memex-search-roles`, and `RET` restarts the search
+once. `M-t` swings between the set and all of it. memex takes the roles as a set and applies them in the
 index, so the page that comes back is a page of those roles rather than a page
 of the corpus with the rest dropped. This needs a memex built with `roles` in
 its search spec; against an older binary the set is ignored and every role comes

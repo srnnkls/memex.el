@@ -46,6 +46,7 @@
 ;;; Code:
 
 (require 'subr-x)
+(require 'transient)
 (require 'memex-core)
 (require 'memex-api)
 (require 'memex-completion)
@@ -531,30 +532,88 @@ nil for the running search's own."
   (memex-search--restart memex-search--mode
                          (not memex-search-group-by-session) memex-search--scope))
 
-(defun memex-search--read-roles ()
-  "Read the roles to ask memex for, as a list, empty for every role.
-Read recursively: the search this narrows is itself a minibuffer read,
-and a set is chosen rather than cycled through because the set wanted is
-usually more than one role and never all four."
-  (let ((enable-recursive-minibuffers t)
-        (roles (memex-search--roles)))
-    (completing-read-multiple
-     (format "memex roles (empty for every role)%s: "
-             (if roles (format " [now %s]" (string-join roles "+")) ""))
-     memex-search-record-roles nil t
-     (and roles (concat (string-join roles ",") ",")))))
+(defvar memex-search--pending-roles nil
+  "The roles `memex-search-select-roles' has put together so far.")
 
-(defun memex-search-select-roles ()
-  "Ask the running search for a set of roles, or for every role.
-Memex takes the set and applies it in the index, so the page that comes
-back is a page of these roles rather than a page of the corpus with the
-rest of it dropped."
+(defun memex-search--toggle-pending-role (role)
+  "Put ROLE in or out of the pending set, in the order roles are offered."
+  (let ((pending (if (member role memex-search--pending-roles)
+                     (remove role memex-search--pending-roles)
+                   (cons role memex-search--pending-roles))))
+    (setq memex-search--pending-roles
+          (seq-filter (lambda (known) (member known pending))
+                      memex-search-record-roles))))
+
+(defun memex-search--pending-role-description (role)
+  "Return ROLE as the roles menu shows it, lit while the pending set holds it."
+  (propertize role 'face (if (member role memex-search--pending-roles)
+                             'transient-value
+                           'transient-inactive-value)))
+
+(defmacro memex-search--define-role-toggle (role)
+  "Define the roles menu command putting ROLE in or out of the pending set."
+  (let ((name (intern (format "memex-search-toggle-role-%s"
+                              (string-replace "_" "-" role)))))
+    `(transient-define-suffix ,name ()
+       ,(format "Put %s in or out of the roles the search will ask for." role)
+       :transient t
+       :description (lambda () (memex-search--pending-role-description ,role))
+       (interactive)
+       (memex-search--toggle-pending-role ,role))))
+
+(memex-search--define-role-toggle "user")
+(memex-search--define-role-toggle "assistant")
+(memex-search--define-role-toggle "tool_use")
+(memex-search--define-role-toggle "tool_result")
+
+(transient-define-suffix memex-search-select-every-role ()
+  "Put every role in the pending set."
+  :transient t
+  :description "every role"
+  (interactive)
+  (setq memex-search--pending-roles (copy-sequence memex-search-record-roles)))
+
+(transient-define-suffix memex-search-select-default-roles ()
+  "Put `memex-search-roles' back as the pending set."
+  :transient t
+  :description "defaults"
+  (interactive)
+  (setq memex-search--pending-roles
+        (copy-sequence (or memex-search-roles memex-search-record-roles))))
+
+(transient-define-suffix memex-search-apply-selected-roles ()
+  "Restart the running search asking for the pending set of roles.
+A set holding every role, or none, asks for every role."
+  :description "apply"
+  (interactive)
+  (memex-search--restart
+   memex-search--mode memex-search-group-by-session memex-search--scope
+   (if (or (null memex-search--pending-roles)
+           (equal memex-search--pending-roles memex-search-record-roles))
+       'every
+     memex-search--pending-roles)))
+
+(transient-define-prefix memex-search-select-roles ()
+  "Choose the roles the running search asks for, and restart it once.
+Each role goes in or out at one key while the menu stays up, so a set of
+any size costs one new query.  Memex takes the set and applies it in the
+index, so the page that comes back is a page of these roles rather than a
+page of the corpus with the rest of it dropped."
+  [:description "Roles the search asks for"
+   ("u" memex-search-toggle-role-user)
+   ("a" memex-search-toggle-role-assistant)
+   ("c" memex-search-toggle-role-tool-use)
+   ("r" memex-search-toggle-role-tool-result)]
+  [("SPC" memex-search-select-every-role)
+   ("DEL" memex-search-select-default-roles)
+   ("RET" memex-search-apply-selected-roles)
+   ("q" "cancel" transient-quit-one)]
   (interactive)
   (unless (and (minibufferp) memex-search--mode)
     (user-error "No memex search is active"))
-  (memex-search--restart memex-search--mode memex-search-group-by-session
-                         memex-search--scope
-                         (or (memex-search--read-roles) 'every)))
+  (setq memex-search--pending-roles
+        (copy-sequence (or (memex-search--roles) memex-search-record-roles)))
+  (transient-setup 'memex-search-select-roles))
 
 (defun memex-search-toggle-roles ()
   "Ask for every role, or go back to `memex-search-roles'.

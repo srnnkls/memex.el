@@ -51,6 +51,7 @@
 (defvar memex-search-snippet-width)
 (defvar memex-search-roles)
 (defvar memex-search--asked-roles)
+(defvar memex-search--pending-roles)
 
 (defconst memex-search-tests--sink-answer (list 'candidates)
   "What the stub sink answers a nil action with.
@@ -1010,11 +1011,13 @@ carries the set of roles, the index applies it, and the prompt names it."
     (memex-search-tests--cleanup)))
 
 (ert-deftest memex-search-takes-a-set-of-roles-and-gives-it-back ()
-  "The set is chosen, not cycled: what was read restarts the search, an
-empty read asks for every role, and a restart carries the set along."
+  "The set is put together one role at a time and applied as one restart:
+the menu opens on the search's own set, every role or none asks for every
+role, and a restart carries the set along."
   (let ((memex-search--mode 'lexical)
         (memex-search-group-by-session nil)
         (memex-search-roles '("user" "assistant"))
+        (memex-search--pending-roles nil)
         scheduled)
     (cl-letf (((symbol-function 'minibufferp) (lambda (&rest _) t))
               ((symbol-function 'minibuffer-contents-no-properties)
@@ -1022,17 +1025,27 @@ empty read asks for every role, and a restart carries the set along."
               ((symbol-function 'run-at-time)
                (lambda (_time _repeat function &rest args)
                  (setq scheduled (cons function args))))
-              ((symbol-function 'abort-recursive-edit) #'ignore))
-      (cl-letf (((symbol-function 'completing-read-multiple)
-                 (lambda (&rest _) '("tool_result"))))
-        (memex-search-select-roles)
-        (should (equal scheduled
-                       '(memex-search--run lexical "alfa" nil nil
-                                           ("tool_result")))))
-      (cl-letf (((symbol-function 'completing-read-multiple)
-                 (lambda (&rest _) nil)))
-        (memex-search-select-roles)
-        (should (equal (nth 5 scheduled) 'every)))
+              ((symbol-function 'abort-recursive-edit) #'ignore)
+              ((symbol-function 'transient-setup) #'ignore))
+      (memex-search-select-roles)
+      (should (equal memex-search--pending-roles '("user" "assistant")))
+      (memex-search-toggle-role-tool-result)
+      (memex-search-toggle-role-user)
+      (should (equal memex-search--pending-roles '("assistant" "tool_result")))
+      (should-not scheduled)
+      (memex-search-apply-selected-roles)
+      (should (equal scheduled
+                     '(memex-search--run lexical "alfa" nil nil
+                                         ("assistant" "tool_result"))))
+      (memex-search-select-every-role)
+      (memex-search-apply-selected-roles)
+      (should (equal (nth 5 scheduled) 'every))
+      (memex-search-select-default-roles)
+      (should (equal memex-search--pending-roles '("user" "assistant")))
+      (memex-search-toggle-role-user)
+      (memex-search-toggle-role-assistant)
+      (memex-search-apply-selected-roles)
+      (should (equal (nth 5 scheduled) 'every))
       (memex-search-toggle-roles)
       (should (equal (nth 5 scheduled) 'every))
       (let ((memex-search--asked-roles nil))
@@ -1051,6 +1064,19 @@ map the search is read under carries them."
                      ("M-." . memex-search-in-selected-session)))
     (should (eq (keymap-lookup memex-search-map (car binding)) (cdr binding)))
     (should (commandp (cdr binding)))))
+
+(ert-deftest memex-search-roles-menu-puts-each-role-at-one-key ()
+  (dolist (binding '(("u" . memex-search-toggle-role-user)
+                     ("a" . memex-search-toggle-role-assistant)
+                     ("c" . memex-search-toggle-role-tool-use)
+                     ("r" . memex-search-toggle-role-tool-result)
+                     ("SPC" . memex-search-select-every-role)
+                     ("DEL" . memex-search-select-default-roles)
+                     ("RET" . memex-search-apply-selected-roles)))
+    (should (eq (plist-get (cdr (transient-get-suffix 'memex-search-select-roles
+                                                      (car binding)))
+                           :command)
+                (cdr binding)))))
 
 (provide 'memex-search-tests)
 ;;; memex-search-tests.el ends here
