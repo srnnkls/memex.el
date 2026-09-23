@@ -52,7 +52,7 @@ merely bound is not enough - it has to be `commandp'.")
         #'memex-view-previous-record
         #'memex-view-search-in-session
         #'memex-view-toggle-tool
-        #'quit-window)
+        #'memex-view-quit)
   "The viewer verbs evil normal state must reach in a session buffer.
 Motion is evil's own, and `memex-view-jump-to-hit' is the movement
 helper the search verb calls rather than a verb of its own.  Resume is
@@ -172,6 +172,29 @@ answers here only if evil normal state leaves memex's key alone."
             (let ((command (key-binding (kbd key))))
               (should command)
               (should-not (string-prefix-p "memex-" (symbol-name command))))))
+      (kill-buffer buffer))))
+
+(ert-deftest memex-evil-q-quits-through-the-viewer-over-an-inherited-quit-window ()
+  "Normal-state `q' runs `memex-view-quit' though magit-section binds it too.
+The viewer's mode derives from magit-section's, whose evil bindings lend
+`q' to `quit-window'; a popup framework remapping that command would
+otherwise close a borrowed window instead of handing it back."
+  (memex-evil-tests--evil-or-skip)
+  (should (require 'memex-evil nil t))
+  (memex-evil-setup)
+  (let* ((parent (evil-get-auxiliary-keymap magit-section-mode-map 'normal t))
+         (before (lookup-key parent "q"))
+         (buffer (generate-new-buffer " *memex-evil-tests-quit*")))
+    (unwind-protect
+        (progn
+          (evil-define-key* 'normal magit-section-mode-map "q" #'quit-window)
+          (with-current-buffer buffer
+            (memex-session-mode)
+            (evil-local-mode 1)
+            (evil-normal-state)
+            (should (eq (key-binding "q") #'memex-view-quit))
+            (should (eq (key-binding (kbd "g Q")) #'memex-view-quit))))
+      (define-key parent "q" (and (not (numberp before)) before))
       (kill-buffer buffer))))
 
 (provide 'memex-evil-tests)

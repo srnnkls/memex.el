@@ -38,10 +38,15 @@
 and a previous element, since evil's `g n' and `g p' are match motions.
 The rest sit under evil's `g' prefix, which is where a mode's own verbs
 belong: `g TAB' folds a tool result, `g f' chooses what the transcript
-shows, `g s' searches the session, `g r' resumes it in herdr and `g Q'
-quits the viewer.  `g U', `g A', `g T' and `g S' put one kind of entry in
-or out of the view, taking evil's `g' prefix rather than the bare keys
-the viewer binds them on, which normal state spends on its own verbs."
+shows, `g s' searches the session and `g r' resumes it in herdr.  `g U',
+`g A', `g T' and `g S' put one kind of entry in or out of the view,
+taking evil's `g' prefix rather than the bare keys the viewer binds them
+on, which normal state spends on its own verbs.
+
+`q' and `g Q' quit the viewer through `memex-view-quit'.  The `q' that
+magit-section's evil bindings would otherwise lend the viewer is
+`quit-window', and a popup framework that remaps it closes the window
+the transcript borrowed rather than handing it back."
   (evil-define-key* 'normal memex-session-mode-map
                     (kbd "M-n") #'memex-view-next-record
                     (kbd "M-p") #'memex-view-previous-record
@@ -54,7 +59,8 @@ the viewer binds them on, which normal state spends on its own verbs."
                     (kbd "g s") #'memex-view-search-in-session
                     (kbd "g r") #'memex-herdr-resume
                     (kbd "g a") #'memex-anchor-show
-                    (kbd "g Q") #'quit-window))
+                    (kbd "q") #'memex-view-quit
+                    (kbd "g Q") #'memex-view-quit))
 
 (with-eval-after-load 'evil (memex-evil-setup))
 
