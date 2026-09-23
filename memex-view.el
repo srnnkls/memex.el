@@ -187,6 +187,9 @@ Their prose is rendered as each chunk is drawn, not ahead of it.")
 (defvar-local memex-view--fill-timer nil
   "The timer drawing what is left of this buffer's transcript.")
 
+(defvar-local memex-view--refresh nil
+  "The request bringing this buffer's transcript up to date, while one is out.")
+
 (defvar-local memex-view-session-id nil
   "The `session_id' of the session this buffer renders.")
 
@@ -1151,20 +1154,23 @@ CHANGE is `next-single-property-change' or
   "Return non-nil when ONE and OTHER name the same numeric or string ID."
   (and one other (equal (format "%s" one) (format "%s" other))))
 
+(defun memex-view--drawn-section (doc-id)
+  "Return the drawn section rendering the record DOC-ID, or nil."
+  (seq-find
+   (lambda (section)
+     (let ((entry (oref section value)))
+       (or (memex-view--same-doc-p
+            (alist-get 'doc_id (memex-entry-call entry)) doc-id)
+           (memex-view--same-doc-p
+            (alist-get 'doc_id (memex-entry-result entry)) doc-id))))
+   (and magit-root-section (oref magit-root-section children))))
+
 (defun memex-view--record-position (doc-id)
   "Return the start of the region rendering the record DOC-ID, or nil.
 A record still queued behind the chunks being drawn is drawn first."
   (when (car memex-view--pending)
     (memex-view--fill-completely))
-  (when-let* ((section
-               (seq-find
-                (lambda (section)
-                  (let ((entry (oref section value)))
-                    (or (memex-view--same-doc-p
-                         (alist-get 'doc_id (memex-entry-call entry)) doc-id)
-                        (memex-view--same-doc-p
-                         (alist-get 'doc_id (memex-entry-result entry)) doc-id))))
-                (and magit-root-section (oref magit-root-section children)))))
+  (when-let* ((section (memex-view--drawn-section doc-id)))
     (marker-position (oref section start))))
 
 (defun memex-view-record-at-point ()
@@ -1288,6 +1294,7 @@ that process is what `memex-cancel-rpc' takes."
   "RET" #'memex-view-visit-payload
   "M-e" #'memex-view-previous-problem
   "s" #'memex-view-search-in-session
+  "g" #'memex-view-refresh
   "q" #'memex-view-quit)
 
 (defun memex-view-quit ()
@@ -1301,6 +1308,7 @@ that process is what `memex-cancel-rpc' takes."
 \\{memex-session-mode-map}"
   (setq-local header-line-format '(:eval (memex-view--header-line)))
   (setq-local imenu-create-index-function #'memex-view--imenu-index)
+  (setq-local revert-buffer-function (lambda (&rest _) (memex-view-refresh)))
   (setq-local memex-view-states (copy-alist memex-view-initial-states))
   (setq-local memex-view-details (default-value 'memex-view-details))
   (memex-view--filter-spec)
@@ -1394,16 +1402,52 @@ buffer the user is in and erase it."
             (set-marker point nil))))))
   memex-view--pending)
 
+(defun memex-view--last-visible-section ()
+  "Return the section of the last record this buffer shows, or nil."
+  (and magit-root-section
+       (seq-find (lambda (section)
+                   (not (eq (memex-view--state
+                             (memex-entry-kind (oref section value)))
+                            'hide)))
+                 (reverse (oref magit-root-section children)))))
+
+(defun memex-view--last-message-section ()
+  "Return the section of the last message this buffer shows, or nil.
+A message is what a person or the agent said; tool traffic after it is
+not one.  A buffer showing no message answers with its last record."
+  (let ((shown (and magit-root-section
+                    (seq-remove (lambda (section)
+                                  (eq (memex-view--state
+                                       (memex-entry-kind (oref section value)))
+                                      'hide))
+                                (reverse (oref magit-root-section children))))))
+    (or (seq-find (lambda (section)
+                    (memq (memex-entry-kind (oref section value)) '(human assistant)))
+                  shown)
+        (car shown))))
+
+(defun memex-view--hold-end (window)
+  "Scroll WINDOW to hold the end of the transcript at its bottom."
+  (with-selected-window window
+    (save-excursion
+      (goto-char (point-max))
+      (recenter -1))))
+
+(defun memex-view--show-end ()
+  "Put point, and every window showing this buffer, on the last message.
+Each window holds the end of the transcript at its bottom, so what
+followed the message stays in view beneath it."
+  (when-let* ((section (memex-view--last-message-section)))
+    (let ((position (marker-position (oref section start))))
+      (memex-view--goto-position position)
+      (dolist (window (get-buffer-window-list (current-buffer) nil t))
+        (memex-view--hold-end window)
+        (set-window-point window position)))))
+
 (defun memex-view-follow-end ()
-  "Move to the last visible record's heading."
+  "Move to the last message, with the end of the transcript in view."
   (interactive)
-  (when-let* ((section
-               (seq-find (lambda (section)
-                           (not (eq (memex-view--state
-                                     (memex-entry-kind (oref section value)))
-                                    'hide)))
-                         (reverse (oref magit-root-section children)))))
-    (magit-section-goto section)))
+  (memex-view--show-end))
 
 (defun memex-view--fill (buffer)
   "Draw the next chunk of BUFFER's transcript, and queue the one after it."
@@ -1505,13 +1549,127 @@ puts the viewer in the workspace the session is pinned to."
            (funcall display buffer)
          (display-buffer buffer memex-view-display-action))
        (with-current-buffer buffer
-         (cond ((null doc-id) (memex-view-follow-end))
+         (cond ((null doc-id) (memex-view--show-end))
                ((memex-view--record-position doc-id)
                 (memex-view--goto-position
                  (memex-view--record-position doc-id)))
                (t (goto-char (point-min))
                   (message "memex: this session renders no record %s"
                            doc-id))))))))
+
+(defun memex-view--entry-section (position)
+  "Return the section of the record covering POSITION, or nil."
+  (and magit-root-section
+       (seq-find (lambda (section)
+                   (and (<= (oref section start) position)
+                        (< position (oref section end))))
+                 (oref magit-root-section children))))
+
+(defun memex-view--anchor (position &optional follow)
+  "Return where POSITION stands in this transcript, to be found after a redraw.
+With FOLLOW, a position on the last message or beyond it is `:end',
+the end of whatever the transcript holds by then.  Otherwise it
+is the `doc_id' of the record covering it consed onto how far into that
+record it lies, or nil where it is in none."
+  (let ((last (memex-view--last-message-section)))
+    (if (and follow (or (null last) (>= position (oref last start))))
+        :end
+      (when-let* ((section (memex-view--entry-section position))
+                  (entry (oref section value))
+                  (doc-id (or (alist-get 'doc_id (memex-entry-call entry))
+                              (alist-get 'doc_id (memex-entry-result entry)))))
+        (cons doc-id (- position (oref section start)))))))
+
+(defun memex-view--anchor-position (anchor &optional drawn)
+  "Return the position ANCHOR names in this transcript as it is drawn now.
+A record the transcript no longer renders is given up for its end, and
+an offset past the end of its record for that record's last character.
+The older chunks are drawn only for a record not among those drawn
+already, so a reader near the end costs a redraw of the end alone; with
+DRAWN they are never drawn, and a record outside them names nothing."
+  (let ((end (lambda ()
+               (if-let* ((section (memex-view--last-message-section)))
+                   (oref section start)
+                 (point-min)))))
+    (cond
+     ((eq anchor :end) (funcall end))
+     ((null anchor) (point-min))
+     ((when-let* ((section
+                   (or (memex-view--drawn-section (car anchor))
+                       (and (not drawn)
+                            (memex-view--record-position (car anchor))
+                            (memex-view--drawn-section (car anchor)))))
+                  (start (marker-position (oref section start))))
+        (min (+ start (cdr anchor))
+             (max start (1- (oref section end))))))
+     ((not drawn) (funcall end)))))
+
+(defun memex-view--redraw (buffer context session-id source-path)
+  "Draw CONTEXT over BUFFER as the session SESSION-ID at SOURCE-PATH.
+What the reader set stays set: how much of each kind of entry shows,
+whether the details do, and where point and every window showing BUFFER
+stood, each found again by the record it was on."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let ((states memex-view-states)
+            (details memex-view-details)
+            (point (memex-view--anchor (point) t))
+            (windows (mapcar (lambda (window)
+                               (list window
+                                     (memex-view--anchor (window-start window))
+                                     (memex-view--anchor (window-point window) t)))
+                             (get-buffer-window-list buffer nil t))))
+        (memex-view--render buffer context session-id source-path)
+        (setq-local memex-view-states states)
+        (setq-local memex-view-details details)
+        (memex-view--apply-states)
+        (goto-char (memex-view--anchor-position point))
+        (pcase-dolist (`(,window ,start ,point) windows)
+          (when (window-live-p window)
+            (if (eq point :end)
+                (memex-view--hold-end window)
+              (when-let* ((position (memex-view--anchor-position start t)))
+                (set-window-start window position t)))
+            (set-window-point window (memex-view--anchor-position point))))))))
+
+(defun memex-view-refresh (&optional buffer)
+  "Bring BUFFER's transcript up to what its session holds now, in place.
+BUFFER is the current buffer unless given.  Memex scans its sources
+first, since its index holds only what it last read, and the session is
+then fetched again and drawn over the buffer.  The filters and details
+stay as they were.  Point, and each window showing BUFFER, that sat on
+the last record follows the session to its new end; one parked on an
+earlier record stays on it.  A refresh of BUFFER still out is abandoned
+for this one.  The buffer is not displayed.
+
+Returns the request process, or nil where BUFFER renders no session."
+  (interactive)
+  (let ((buffer (or buffer (current-buffer))))
+    (when (and (buffer-live-p buffer)
+               (eq (buffer-local-value 'major-mode buffer) 'memex-session-mode)
+               (buffer-local-value 'memex-view-session-id buffer))
+      (with-current-buffer buffer
+        (ignore-errors (memex-cancel-rpc memex-view--refresh))
+        (let* ((session-id memex-view-session-id)
+               (source-path memex-view-source-path)
+               (settle (lambda (&optional request)
+                         (when (buffer-live-p buffer)
+                           (with-current-buffer buffer
+                             (setq-local memex-view--refresh request)))))
+               (failed (lambda (_error) (funcall settle))))
+          (setq-local
+           memex-view--refresh
+           (memex-api-index
+            (lambda (_result)
+              (funcall
+               settle
+               (memex-api-session
+                session-id source-path
+                (lambda (context)
+                  (memex-view--redraw buffer context session-id source-path)
+                  (funcall settle))
+                :errback failed)))
+            :errback failed)))))))
 
 (provide 'memex-view)
 ;;; memex-view.el ends here

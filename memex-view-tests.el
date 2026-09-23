@@ -60,6 +60,10 @@
 (declare-function memex-view--reveal "memex-view")
 (declare-function memex-view-toggle-details "memex-view")
 (declare-function memex-view-tool-section-p "memex-view")
+(declare-function memex-view-refresh "memex-view")
+(declare-function memex-view--set-state "memex-view")
+(declare-function memex-view--state "memex-view")
+(declare-function memex-view-record-buffer "memex-view")
 
 (defvar memex-view-session-id)
 (defvar memex-view-source-path)
@@ -68,6 +72,7 @@
 (defvar memex-view-output-lines)
 (defvar memex-view-states)
 (defvar memex-view-indent)
+(defvar memex-view-details)
 
 (declare-function memex-session-mode "memex-view")
 
@@ -1467,6 +1472,160 @@ request and worth nobody's eye on every line of a session."
                        memex-view-tests--session-id
                        memex-view-tests--source-path)))
       (kill-buffer buffer))))
+
+(defun memex-view-tests--grown-records ()
+  "Return the fixture session with a fifth record its agent wrote since."
+  (append (memex-view-tests--records)
+          (list (memex-view-tests--record
+                 :doc-id 8805 :ts 1787671117500 :source "codex"
+                 :project "memex.el" :session-id memex-view-tests--session-id
+                 :turn-id 7404 :role "assistant"
+                 :text "epsilon reply\nsecond line of epsilon"
+                 :source-path memex-view-tests--source-path))))
+
+(defun memex-view-tests--refresh (buffer records)
+  "Refresh BUFFER against a session now holding RECORDS.
+Memex answers the scan and the fetch at once, so the refresh has landed
+when this returns."
+  (let ((context (memex-view-tests--context records)))
+    (cl-letf (((symbol-function 'memex-api-index)
+               (lambda (callback &rest _) (funcall callback nil) nil))
+              ((symbol-function 'memex-api-session)
+               (lambda (id path callback &rest _)
+                 (push (cons id path) memex-view-tests--requests)
+                 (funcall callback context)
+                 nil)))
+      (memex-view-refresh buffer))))
+
+(ert-deftest memex-view-opens-on-the-last-message-not-the-tool-traffic-after-it ()
+  "A session mid-turn ends in tool calls; the view opens on what was last said."
+  (skip-unless (featurep 'magit-section))
+  (unwind-protect
+      (let* ((records (append (memex-view-tests--records)
+                              (list (memex-view-tests--record
+                                     :doc-id 8806 :ts 1787671119000 :source "codex"
+                                     :project "memex.el"
+                                     :session-id memex-view-tests--session-id
+                                     :turn-id 7405 :role "tool_result"
+                                     :tool-name "Bash" :text "listing"
+                                     :tool-output "listing"
+                                     :source-path memex-view-tests--source-path))))
+             (buffer (memex-view-tests--open records
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (should (equal (alist-get 'doc_id (get-text-property (point) 'memex-record))
+                         8804))
+          (let ((windows (get-buffer-window-list buffer nil t)))
+            (should windows)
+            (dolist (window windows)
+              (should (equal (window-point window) (point)))))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-refresh-keeps-the-filters-and-details ()
+  (skip-unless (featurep 'magit-section))
+  (unwind-protect
+      (let ((buffer (memex-view-tests--open (memex-view-tests--records)
+                                            memex-view-tests--session-id
+                                            memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (memex-view--set-state 'tool 'hide)
+          (memex-view-toggle-details)
+          (memex-view-tests--refresh buffer (memex-view-tests--grown-records))
+          (should (memex-view-tests--position-of "epsilon reply"))
+          (should (eq (memex-view--state 'tool) 'hide))
+          (should (memq 'tool buffer-invisibility-spec))
+          (should memex-view-details)
+          (should-not (memq 'detail buffer-invisibility-spec))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-refresh-follows-a-reader-at-the-end ()
+  (skip-unless (featurep 'magit-section))
+  (unwind-protect
+      (let* ((records (memex-view-tests--grown-records))
+             (buffer (memex-view-tests--open (memex-view-tests--records)
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (should (memex-view-tests--starts-record-p (nth 3 records)))
+          (memex-view-tests--refresh buffer records)
+          (should (memex-view-tests--starts-record-p (nth 4 records)))
+          (let ((windows (get-buffer-window-list buffer nil t)))
+            (should windows)
+            (dolist (window windows)
+              (should (equal (window-point window) (point)))))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-refresh-at-the-end-leaves-the-older-chunks-to-the-fill ()
+  (skip-unless (featurep 'magit-section))
+  (unwind-protect
+      (let* ((memex-view-chunk-size 1)
+             (records (memex-view-tests--grown-records))
+             (buffer (memex-view-tests--open (memex-view-tests--records)
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (memex-view-tests--refresh buffer records)
+          (should (equal (get-text-property (point) 'memex-record) (nth 4 records)))
+          (should (car memex-view--pending))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-refresh-leaves-a-parked-reader-where-it-was ()
+  (skip-unless (featurep 'magit-section))
+  (unwind-protect
+      (let* ((records (memex-view-tests--grown-records))
+             (buffer (memex-view-tests--open (memex-view-tests--records)
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (memex-view-jump-to-hit (nth 1 records))
+          (forward-char 3)
+          (let ((offset (- (point) (memex-view--record-position 8802))))
+            (dolist (window (get-buffer-window-list buffer nil t))
+              (set-window-point window (point)))
+            (memex-view-tests--refresh buffer records)
+            (should (memex-view-tests--position-of "epsilon reply"))
+            (should (equal (get-text-property (point) 'memex-record)
+                           (nth 1 records)))
+            (should (= (- (point) (memex-view--record-position 8802)) offset))
+            (let ((windows (get-buffer-window-list buffer nil t)))
+              (should windows)
+              (dolist (window windows)
+                (should (equal (window-point window) (point))))))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-refresh-leaves-a-buffer-without-a-session-alone ()
+  (skip-unless (featurep 'magit-section))
+  (let ((buffer (memex-view-record-buffer (car (memex-view-tests--records))
+                                          "*memex view tests lone record*"))
+        (asked nil))
+    (unwind-protect
+        (cl-letf (((symbol-function 'memex-api-index)
+                   (lambda (&rest _) (push 'index asked) nil))
+                  ((symbol-function 'memex-api-session)
+                   (lambda (&rest _) (push 'session asked) nil)))
+          (should-not (memex-view-refresh buffer))
+          (with-temp-buffer
+            (should-not (memex-view-refresh)))
+          (should-not asked))
+      (kill-buffer buffer))))
+
+(ert-deftest memex-view-refresh-abandons-the-one-still-out ()
+  (skip-unless (featurep 'magit-section))
+  (unwind-protect
+      (let ((buffer (memex-view-tests--open (memex-view-tests--records)
+                                            memex-view-tests--session-id
+                                            memex-view-tests--source-path))
+            (issued 0)
+            (cancelled nil))
+        (cl-letf (((symbol-function 'memex-api-index)
+                   (lambda (&rest _) (intern (format "request-%d" (cl-incf issued)))))
+                  ((symbol-function 'memex-cancel-rpc)
+                   (lambda (process) (push process cancelled) nil)))
+          (should (eq (memex-view-refresh buffer) 'request-1))
+          (should (eq (memex-view-refresh buffer) 'request-2))
+          (should (equal (delq nil cancelled) '(request-1)))))
+    (memex-view-tests--cleanup)))
 
 (provide 'memex-view-tests)
 ;;; memex-view-tests.el ends here
