@@ -946,32 +946,90 @@ miniwindow, which spans the frame whatever that window is doing."
                      (window-width (minibuffer-window)))))
       (delete-window side))))
 
-(ert-deftest memex-search-preview-draws-the-text-the-snippet-was-cut-from ()
-  "The preview shows the whole hit, not the excerpt already in the row."
-  (skip-unless (featurep 'magit-section))
-  (let* ((memex-search-group-by-session t)
-         (memex-search-snippet-width 20)
-         (text (concat "alfa " (make-string 300 ?z) " omega"))
-         (record (memex-search-tests--record 7703 "memex.el" text))
-         (candidate (car (memex-search--candidates (list (list 1.0 record))
-                                                   "alfa")))
-         (shown nil))
+(defmacro memex-search-tests--with-sessions (displays &rest body)
+  "Run BODY with `memex-view-session' queuing its DISPLAY calls in DISPLAYS.
+Each queued entry is (DOC-ID . THUNK); calling THUNK hands DISPLAY a
+fresh viewer buffer, the way the session's fetch answers later."
+  (declare (indent 1))
+  `(let ((memex-search--preview-state nil))
+     (cl-letf (((symbol-function 'memex-view-session)
+                (lambda (session-id _source-path doc-id display)
+                  (setq ,displays
+                        (append ,displays
+                                (list (cons doc-id
+                                            (lambda ()
+                                              (let ((buffer (generate-new-buffer
+                                                             (format "*memex session %s*"
+                                                                     session-id))))
+                                                (funcall display buffer)
+                                                buffer)))))))))
+       ,@body)))
+
+(defun memex-search-tests--candidate (doc-id)
+  "Return a record-level candidate for the record DOC-ID."
+  (let ((memex-search-group-by-session nil))
+    (car (memex-search--candidates
+          (list (list 1.0 (memex-search-tests--record doc-id "memex.el" "hit")))
+          "hit"))))
+
+(ert-deftest memex-search-preview-shows-the-session-in-the-calling-window ()
+  "A preview puts the hit's session in the window the search came from,
+at the hit, and the window gets its buffer back when the search ends."
+  (let ((origin (get-buffer-create "*memex-search-tests origin*"))
+        (displays nil))
     (unwind-protect
-        (cl-letf (((symbol-function 'display-buffer)
-                   (lambda (buffer &rest _) (setq shown buffer) buffer)))
-          (should-not (string-match-p "omega" (substring-no-properties candidate)))
-          (memex-search--preview candidate)
-          (should (buffer-live-p shown))
-          (should (equal (buffer-name shown) memex-search-preview-buffer-name))
-          (with-current-buffer shown
-            (should (string-match-p "omega" (buffer-string))))
-          (funcall (memex-search--state) 'preview nil)
-          (should-not (get-buffer memex-search-preview-buffer-name))
-          (memex-search--preview candidate)
-          (funcall (memex-search--state) 'exit nil)
-          (should-not (get-buffer memex-search-preview-buffer-name)))
-      (when-let* ((buffer (get-buffer memex-search-preview-buffer-name)))
-        (kill-buffer buffer)))))
+        (save-window-excursion
+          (switch-to-buffer origin)
+          (memex-search-tests--with-sessions displays
+            (memex-search--preview (memex-search-tests--candidate 7801))
+            (should (equal (caar displays) 7801))
+            (let ((session (funcall (cdar displays))))
+              (should (eq (window-buffer (selected-window)) session))
+              (funcall (memex-search--state) 'exit nil)
+              (should (eq (window-buffer (selected-window)) origin))
+              (should-not (buffer-live-p session)))))
+      (kill-buffer origin))))
+
+(ert-deftest memex-search-preview-lets-only-the-newest-session-in ()
+  "A session answering after the selection moved on stays out of the window."
+  (let ((origin (get-buffer-create "*memex-search-tests origin*"))
+        (displays nil))
+    (unwind-protect
+        (save-window-excursion
+          (switch-to-buffer origin)
+          (memex-search-tests--with-sessions displays
+            (memex-search--preview (memex-search-tests--candidate 7802))
+            (memex-search--preview (memex-search-tests--candidate 7803))
+            (let* ((newest (funcall (cdr (nth 1 displays))))
+                   (stale (funcall (cdr (nth 0 displays)))))
+              (should (eq (window-buffer (selected-window)) newest))
+              (funcall (memex-search--state) 'preview nil)
+              (should (eq (window-buffer (selected-window)) origin))
+              (should-not (buffer-live-p newest))
+              (should-not (buffer-live-p stale)))))
+      (kill-buffer origin))))
+
+(ert-deftest memex-search-preview-keeps-a-session-that-was-already-open ()
+  "Ending the search kills only the sessions its preview opened."
+  (let ((origin (get-buffer-create "*memex-search-tests origin*"))
+        (open (get-buffer-create "*memex-search-tests open*"))
+        (displays nil))
+    (unwind-protect
+        (save-window-excursion
+          (switch-to-buffer origin)
+          (memex-search-tests--with-sessions displays
+            (cl-letf (((symbol-function 'memex-view-session-buffer)
+                       (lambda (&rest _) open))
+                      ((symbol-function 'memex-view-session)
+                       (lambda (_session-id _source-path _doc-id display)
+                         (funcall display open))))
+              (memex-search--preview (memex-search-tests--candidate 7804))
+              (should (eq (window-buffer (selected-window)) open))
+              (funcall (memex-search--state) 'exit nil)
+              (should (eq (window-buffer (selected-window)) origin))
+              (should (buffer-live-p open)))))
+      (kill-buffer origin)
+      (kill-buffer open))))
 
 (ert-deftest memex-search-previews-only-where-the-reader-asks-for-one ()
   "A preview renders a whole record, so the selection does not drag one
