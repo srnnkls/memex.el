@@ -49,6 +49,12 @@
 (defvar memex-status-tests--requests nil
   "Keyword arguments of every stubbed request, newest first.")
 
+(defvar memex-status-tests--count-requests nil
+  "Keyword arguments of every stubbed count, newest first.")
+
+(defvar memex-status-tests--total 347
+  "The total the stubbed count answers with.")
+
 (defun memex-status-tests--sessions ()
   "Return the sessions the stub answers with, newest activity first."
   (list '((session_id . "s1") (source . "claude")
@@ -85,6 +91,7 @@ ANSWER is the session list the stub hands back, or a cons of `:error' and
 the error object it refuses with instead."
   (declare (indent 1) (debug (form body)))
   `(let ((memex-status-tests--requests nil)
+         (memex-status-tests--count-requests nil)
          (buffer (generate-new-buffer " *memex-status-test*"))
          (answer ,answer))
      (unwind-protect
@@ -94,6 +101,11 @@ the error object it refuses with instead."
                       (if (eq (car-safe answer) :error)
                           (funcall (plist-get keys :errback) (cdr answer))
                         (funcall callback answer))
+                      nil))
+                   ((symbol-function 'memex-api-session-count)
+                    (lambda (callback &rest keys)
+                      (push keys memex-status-tests--count-requests)
+                      (funcall callback memex-status-tests--total)
                       nil)))
            (with-current-buffer buffer
              (memex-status-mode)
@@ -127,12 +139,27 @@ the error object it refuses with instead."
 
 ;;;; Drawing
 
-(ert-deftest memex-status-heads-the-list-with-what-it-asked-for ()
+(ert-deftest memex-status-heads-the-list-with-the-rows-over-the-total ()
   (skip-unless (featurep 'magit-section))
   (memex-status-tests--with-dashboard (memex-status-tests--sessions)
     (goto-char (point-min))
-    (should (looking-at-p "Sessions 3/20"))
+    (should (looking-at-p "Sessions 3/347"))
     (should (string-match-p "newest first" (thing-at-point 'line t)))))
+
+(ert-deftest memex-status-heads-the-list-with-the-rows-alone-without-a-total ()
+  (skip-unless (featurep 'magit-section))
+  (let ((memex-status-tests--total nil))
+    (memex-status-tests--with-dashboard (memex-status-tests--sessions)
+      (goto-char (point-min))
+      (should (looking-at-p "Sessions 3 ")))))
+
+(ert-deftest memex-status-counts-what-its-filters-match ()
+  (skip-unless (featurep 'magit-section))
+  (memex-status-tests--with-dashboard (memex-status-tests--sessions)
+    (memex-status-narrow-source "codex")
+    (let ((sent (car memex-status-tests--count-requests)))
+      (should (equal "codex" (plist-get sent :source)))
+      (should-not (plist-member sent :limit)))))
 
 (ert-deftest memex-status-draws-one-row-per-session-carrying-it ()
   (skip-unless (featurep 'magit-section))
@@ -299,9 +326,7 @@ answered with and must not spend a request."
   (skip-unless (featurep 'magit-section))
   (memex-status-tests--with-dashboard (memex-status-tests--sessions)
     (memex-status-set-limit 5)
-    (should (equal 5 (memex-status-tests--sent :limit)))
-    (goto-char (point-min))
-    (should (looking-at-p "Sessions 3/5"))))
+    (should (equal 5 (memex-status-tests--sent :limit)))))
 
 (ert-deftest memex-status-refuses-a-limit-memex-will-not-serve ()
   (skip-unless (featurep 'magit-section))

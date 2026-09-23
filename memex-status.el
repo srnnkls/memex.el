@@ -15,6 +15,10 @@
 ;; project, source, size and working directory.
 ;;
 ;;   M-x memex-status
+;;   M-x memex-project-status
+;;
+;; The second keeps to the sessions of the current project, in a
+;; dashboard named after it.
 ;;
 ;; Every action has a direct key and `?' shows a menu of the same keys.
 ;; `f' narrows the window memex answers with, `S' orders what came back,
@@ -39,6 +43,7 @@
 
 (declare-function memex-herdr-resume "memex-herdr" (record))
 (declare-function memex-search-in-sessions "memex" (scope &optional mode initial))
+(declare-function project-root "project" (project))
 
 (defgroup memex-status nil
   "The dashboard over indexed sessions."
@@ -163,6 +168,9 @@ Nil leaves the rows in the order memex answered with.")
 (defvar-local memex-status--narrowing nil
   "Plist of the filters the next request carries.")
 
+(defvar-local memex-status--project nil
+  "Root of the project this dashboard keeps to, or nil for every session.")
+
 (defvar-local memex-status--limit nil
   "How many sessions this dashboard asks for.")
 
@@ -171,6 +179,12 @@ Nil leaves the rows in the order memex answered with.")
 
 (defvar-local memex-status--error nil
   "What memex refused the last request with, or nil.")
+
+(defvar-local memex-status--total nil
+  "How many sessions match the filters in all, or nil while unknown.")
+
+(defvar-local memex-status--count-request nil
+  "The count in flight, which a refresh cancels before starting another.")
 
 (defun memex-status--limit ()
   "Return how many sessions this dashboard asks for."
@@ -301,8 +315,9 @@ Nil leaves the rows in the order memex answered with.")
   (let ((sessions (memex-status--ordered memex-status--sessions)))
     (magit-insert-section (memex-status-sessions)
       (magit-insert-heading
-        (concat (propertize (format "Sessions %d/%d"
-                                    (length sessions) (memex-status--limit))
+        (concat (propertize (concat (format "Sessions %d" (length sessions))
+                                    (when memex-status--total
+                                      (format "/%d" memex-status--total)))
                             'font-lock-face 'magit-section-heading)
                 (memex-status--sort-summary)
                 (memex-status--narrowing-summary)))
@@ -320,6 +335,8 @@ Nil leaves the rows in the order memex answered with.")
     (erase-buffer)
     (magit-insert-section (memex-status-root)
       (memex-status--insert-sessions))
+    (let ((magit-section-cache-visibility nil))
+      (magit-section-show magit-root-section))
     (goto-char (point-min))
     (forward-line (1- line))))
 
@@ -344,25 +361,48 @@ Nil leaves the rows in the order memex answered with.")
               memex-status--error (error-message-string failure))
         (memex-status--redraw)))))
 
+(defun memex-status--count (buffer)
+  "Return the callback giving BUFFER the total its filters match."
+  (lambda (total)
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (setq memex-status--count-request nil
+              memex-status--total total)
+        (memex-status--redraw)))))
+
 (defun memex-status-refresh ()
-  "Ask memex for the sessions again and redraw when the answer lands."
+  "Ask memex for the sessions again and redraw when the answer lands.
+The total the filters match is asked for alongside, and heads the list
+once it lands."
   (interactive)
   (unless (derived-mode-p 'memex-status-mode)
     (user-error "Not a memex status buffer"))
-  (when memex-status--request
-    (memex-cancel-rpc memex-status--request))
-  (let ((buffer (current-buffer))
-        (narrowing memex-status--narrowing))
+  (dolist (request (list memex-status--request memex-status--count-request))
+    (when request
+      (memex-cancel-rpc request)))
+  (setq memex-status--total nil)
+  (let* ((buffer (current-buffer))
+         (narrowing memex-status--narrowing)
+         (filters (list :origin (or (plist-get narrowing :origin)
+                                    memex-status-origin)
+                        :source (plist-get narrowing :source)
+                        :project (plist-get narrowing :project)
+                        :cwd (plist-get narrowing :cwd)
+                        :since (plist-get narrowing :since))))
     (setq memex-status--request
           (apply #'memex-api-sessions
                  (memex-status--receive buffer)
                  :errback (memex-status--refuse buffer)
                  :limit (memex-status--limit)
-                 :origin (or (plist-get narrowing :origin) memex-status-origin)
-                 (list :source (plist-get narrowing :source)
-                       :project (plist-get narrowing :project)
-                       :cwd (plist-get narrowing :cwd)
-                       :since (plist-get narrowing :since))))))
+                 filters)
+          memex-status--count-request
+          (apply #'memex-api-session-count
+                 (memex-status--count buffer)
+                 :errback (lambda (_failure)
+                            (when (buffer-live-p buffer)
+                              (with-current-buffer buffer
+                                (setq memex-status--count-request nil))))
+                 filters))))
 
 ;;;; Mode
 
@@ -377,6 +417,7 @@ Nil leaves the rows in the order memex answered with.")
   "s" #'memex-status-search
   "S" #'memex-status-search-dispatch
   "f" #'memex-status-filter
+  "P" #'memex-status-toggle-project
   "O" #'memex-status-sort
   "L" #'memex-status-set-limit
   "g" #'memex-status-refresh
@@ -387,17 +428,51 @@ Nil leaves the rows in the order memex answered with.")
   :group 'memex-status
   (setq-local revert-buffer-function (lambda (&rest _) (memex-status-refresh))))
 
+(defun memex-status-project-buffer-name (directory)
+  "Return the name of the dashboard of the project rooted at DIRECTORY."
+  (format "%s: %s*"
+          (string-remove-suffix "*" memex-status-buffer-name)
+          (file-name-nondirectory (directory-file-name directory))))
+
+(defun memex-status--project-root (directory)
+  "Return the root of DIRECTORY's project, or DIRECTORY outside one."
+  (let ((directory (expand-file-name directory)))
+    (file-name-as-directory
+     (expand-file-name
+      (if-let* ((project (project-current nil directory)))
+          (project-root project)
+        directory)))))
+
+(defun memex-status--show (buffer &optional project)
+  "Show BUFFER as the dashboard, keeping it to the sessions of PROJECT."
+  (with-current-buffer buffer
+    (unless (derived-mode-p 'memex-status-mode)
+      (memex-status-mode))
+    (when project
+      (setq-local memex-status--project project)
+      (setq-local memex-status--narrowing
+                  (plist-put (copy-sequence memex-status--narrowing)
+                             :cwd project)))
+    (memex-status-refresh))
+  (let ((display-buffer-overriding-action memex-status-display-action))
+    (pop-to-buffer buffer)))
+
 ;;;###autoload
 (defun memex-status ()
   "Show the sessions memex indexed, newest activity first."
   (interactive)
-  (let ((buffer (get-buffer-create memex-status-buffer-name)))
-    (with-current-buffer buffer
-      (unless (derived-mode-p 'memex-status-mode)
-        (memex-status-mode))
-      (memex-status-refresh))
-    (let ((display-buffer-overriding-action memex-status-display-action))
-      (pop-to-buffer buffer))))
+  (memex-status--show (get-buffer-create memex-status-buffer-name)))
+
+;;;###autoload
+(defun memex-project-status (&optional directory)
+  "Show the sessions recorded in DIRECTORY's project, newest activity first.
+Each project gets a dashboard of its own, named after it.  DIRECTORY
+defaults to `default-directory'; outside a project it stands for itself."
+  (interactive)
+  (let ((root (memex-status--project-root (or directory default-directory))))
+    (memex-status--show
+     (get-buffer-create (memex-status-project-buffer-name root))
+     root)))
 
 ;;;; Commands
 
@@ -544,6 +619,17 @@ or `hybrid'."
                                   nil t))))
   (memex-status--narrow :origin origin))
 
+(defun memex-status-toggle-project ()
+  "Switch the dashboard between its project's sessions and every session.
+A dashboard opened for no project keeps to the one it was opened in."
+  (interactive)
+  (unless (derived-mode-p 'memex-status-mode)
+    (user-error "Not a memex status buffer"))
+  (memex-status--narrow
+   :cwd (unless (plist-get memex-status--narrowing :cwd)
+          (or memex-status--project
+              (memex-status--project-root default-directory)))))
+
 (defun memex-status-clear-narrowing ()
   "Ask memex for every session again."
   (interactive)
@@ -660,6 +746,7 @@ Every suffix here is bound directly in `memex-status-mode-map' as well."
     ("S" "search menu" memex-status-search-dispatch)]
    ["List"
     ("f" "narrow" memex-status-filter)
+    ("P" "project or all" memex-status-toggle-project)
     ("O" "order" memex-status-sort)
     ("L" memex-status-set-limit
      :description memex-status--limit-description)
