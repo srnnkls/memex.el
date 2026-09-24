@@ -20,7 +20,6 @@
 (require 'ert)
 (require 'cl-lib)
 (require 'seq)
-(require 'memex-tests-support)
 
 (require 'memex-core)
 (require 'memex-api)

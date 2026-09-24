@@ -21,7 +21,6 @@
 (require 'seq)
 (require 'subr-x)
 
-(require 'memex-tests-support)
 (require 'memex-anchor nil t)
 
 (declare-function memex-anchor--skeleton "memex-anchor")

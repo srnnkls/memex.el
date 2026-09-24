@@ -19,7 +19,6 @@
 (require 'cl-lib)
 (require 'subr-x)
 
-(require 'memex-tests-support)
 (require 'memex-entry nil t)
 
 (declare-function memex-entry-pair "memex-entry")

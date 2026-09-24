@@ -24,7 +24,6 @@
 (require 'memex-core)
 (require 'memex-api)
 
-(require 'memex-tests-support)
 
 (require 'magit-section nil t)
 (require 'memex-status nil t)

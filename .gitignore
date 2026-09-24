@@ -3,3 +3,4 @@
 scopes/
 resources
 *.elc
+.eask/
