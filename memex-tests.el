@@ -36,7 +36,6 @@
 (require 'memex-herdr-tests)
 (require 'memex-entry-tests)
 (require 'memex-anchor-tests)
-(require 'memex-markdown-tests)
 (require 'memex-embark-tests)
 (require 'memex-org-tests)
 

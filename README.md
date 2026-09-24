@@ -117,7 +117,7 @@ change session ranking or fetch every match in the index.
 | `memex-usage.el` | the token usage report |
 | `memex-herdr.el` | the resume bridge — an indexed session back into a herdr tab |
 | `memex-anchor.el` | the scrollback bridge — an indexed record back to the live agent's screen |
-| `memex-markdown.el` | markdown to HTML to shr |
+| `memex-markdown.el` | compatibility shim over [lectio.el](https://github.com/srnnkls/lectio.el), which does the markdown to HTML to shr |
 | `memex-org.el` | the `memex` link type and capture out of a record |
 | `memex-embark.el` | embark actions on memex candidates |
 | `memex-evil.el` | evil normal-state bindings for the viewer |
@@ -160,7 +160,8 @@ the category a window of its own:
 reads a query and fetches once without consult, and searches as you type with it.
 
 The memex binary itself is a real requirement — `memex-executable` names it.
-Nothing else is: an agent's markdown is rendered by `memex-markdown.el` and shr.
+Nothing else is: an agent's markdown is rendered by `lectio.el` and shr,
+with `memex-markdown.el` left as aliases for callers that look the old names up.
 Pandoc was used for this and dropped — it covers GFM whole, but costs around a
 second per session whatever the session holds, and rendering 964 records went
 from 1.68s to 0.66s without it. Tables, footnotes and task lists are the price
