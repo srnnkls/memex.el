@@ -25,7 +25,6 @@
 (require 'memex-core)
 (require 'memex-api)
 
-(require 'memex-tests-support)
 
 (require 'magit-section nil t)
 (require 'memex-entry nil t)
@@ -410,6 +409,41 @@ finds it."
           (should (window-live-p (selected-window)))
           (should (eq (window-buffer (selected-window)) other)))
       (kill-buffer other)
+      (memex-view-tests--cleanup))))
+
+(ert-deftest memex-view-quit-gives-a-claimed-window-back-what-it-held ()
+  (let ((held (generate-new-buffer "*memex view tests held*")))
+    (unwind-protect
+        (save-window-excursion
+          (let* ((buffer (memex-view-tests--open
+                          (memex-view-tests--records)
+                          memex-view-tests--session-id
+                          memex-view-tests--source-path))
+                 (window (display-buffer held '(display-buffer-pop-up-window))))
+            (should (eq (nth 3 (window-parameter window 'quit-restore)) held))
+            (set-window-buffer window buffer)
+            (with-selected-window window (memex-view-quit))
+            (should (window-live-p window))
+            (should (eq (window-buffer window) held))
+            (should-not (buffer-live-p buffer))))
+      (kill-buffer held)
+      (memex-view-tests--cleanup))))
+
+(ert-deftest memex-view-quit-takes-the-window-it-opened-with-it ()
+  (let ((elsewhere (generate-new-buffer "*memex view tests elsewhere*")))
+    (unwind-protect
+        (save-window-excursion
+          (let ((buffer (memex-view-tests--open
+                         (memex-view-tests--records)
+                         memex-view-tests--session-id
+                         memex-view-tests--source-path)))
+            (set-window-buffer (selected-window) elsewhere)
+            (let ((window (display-buffer buffer '(display-buffer-pop-up-window))))
+              (should (eq (nth 3 (window-parameter window 'quit-restore)) buffer))
+              (with-selected-window window (memex-view-quit))
+              (should-not (window-live-p window))
+              (should-not (buffer-live-p buffer)))))
+      (kill-buffer elsewhere)
       (memex-view-tests--cleanup))))
 
 (ert-deftest memex-view-prepends-history-without-moving-the-reader ()

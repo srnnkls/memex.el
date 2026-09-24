@@ -1303,9 +1303,20 @@ that process is what `memex-cancel-rpc' takes."
   "q" #'memex-view-quit)
 
 (defun memex-view-quit ()
-  "Bury the transcript, leaving the window it was read in where it was."
+  "Kill the transcript, taking with it only a window opened to show it.
+A window `display-buffer' made for the transcript goes when the
+transcript does.  One the viewer claimed from something already
+standing, a popup holding a terminal say, is that other thing's window:
+it stays, showing again what it was opened for."
   (interactive)
-  (quit-restore-window nil 'bury))
+  (let* ((buffer (current-buffer))
+         (window (selected-window))
+         (opened-for (nth 3 (window-parameter window 'quit-restore))))
+    (if (or (null opened-for) (eq opened-for buffer))
+        (quit-restore-window window 'kill)
+      (when (buffer-live-p opened-for)
+        (set-window-buffer window opened-for))
+      (kill-buffer buffer))))
 
 (define-derived-mode memex-session-mode magit-section-mode "Memex Session"
   "Major mode for a memex session transcript.
