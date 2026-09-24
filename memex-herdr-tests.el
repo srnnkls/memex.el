@@ -449,7 +449,7 @@ probed for on the three branches that never touch it."
                ((symbol-function '+ws-pin-follow) (lambda (_buffer) nil)))
             (funcall (nth 3 view) buffer))
           (should (equal (mapcar #'car pinned) (list buffer)))
-          (should (eq (window-buffer (selected-window)) buffer)))
+          (should (get-buffer-window buffer)))
       (kill-buffer buffer))))
 
 (ert-deftest memex-herdr-open-session-follows-a-pinned-buffer-without-repinning-it ()
@@ -476,7 +476,7 @@ probed for on the three branches that never touch it."
             (funcall display buffer))
           (should (null pinned))
           (should (equal followed (list buffer)))
-          (should (eq (window-buffer (selected-window)) buffer)))
+          (should (get-buffer-window buffer)))
       (kill-buffer buffer))))
 
 (ert-deftest memex-herdr-open-session-displays-plainly-without-the-workspace-pins ()
@@ -495,7 +495,7 @@ probed for on the three branches that never touch it."
           (should (functionp display))
           (should-not (fboundp '+ws-pin-of))
           (funcall display buffer)
-          (should (eq (window-buffer (selected-window)) buffer)))
+          (should (get-buffer-window buffer)))
       (kill-buffer buffer))))
 
 (defconst memex-herdr-tests--agent-cwd "/tmp/memex-herdr-tests/proj"
@@ -552,43 +552,35 @@ as many answers as it is about."
        (kill-buffer buffer))))
 
 (ert-deftest memex-herdr-gives-back-a-window-it-only-borrowed ()
+  "A window the viewer was shown in goes back to what it held before."
   (let ((terminal (generate-new-buffer "*memex herdr tests terminal*"))
         (viewer (generate-new-buffer "*memex herdr tests viewer*")))
     (unwind-protect
-        (progn
+        (let ((display-buffer-alist
+               (list (cons (regexp-quote (buffer-name viewer))
+                           '((display-buffer-same-window))))))
           (set-window-buffer (selected-window) terminal)
           (memex-herdr--display viewer)
           (should (eq (window-buffer (selected-window)) viewer))
-          (pcase-let ((`(,type ,previous . ,_)
-                       (window-parameter (selected-window) 'quit-restore)))
-            (should (eq type 'other))
-            (should (eq (car previous) terminal)))
           (quit-window nil (selected-window))
-          (should (window-live-p (selected-window)))
           (should (eq (window-buffer (selected-window)) terminal)))
       (kill-buffer viewer)
       (kill-buffer terminal))))
 
-(ert-deftest memex-herdr-takes-the-window-it-was-called-from ()
-  (dolist (dedication (list nil t 'side))
-    (let ((terminal (generate-new-buffer "*memex herdr tests terminal*"))
-          (viewer (generate-new-buffer "*memex herdr tests viewer*"))
-          (windows (length (window-list))))
-      (unwind-protect
-          (progn
-            (set-window-buffer (selected-window) terminal)
-            (set-window-dedicated-p (selected-window) dedication)
-            (memex-herdr--display viewer)
-            (should (eq (window-buffer (selected-window)) viewer))
-            (should (= (length (window-list)) windows))
-            (should-not (window-dedicated-p (selected-window)))
-            (with-current-buffer viewer (memex-view-quit))
-            (should (window-live-p (selected-window)))
-            (should (= (length (window-list)) windows))
-            (should (eq (window-buffer (selected-window)) terminal)))
-        (set-window-dedicated-p (selected-window) nil)
-        (kill-buffer viewer)
-        (kill-buffer terminal)))))
+(ert-deftest memex-herdr-leaves-the-window-to-display-buffer ()
+  "The viewer goes wherever the editor's own window rules put it."
+  (let ((viewer (generate-new-buffer "*memex herdr tests viewer*"))
+        (asked nil))
+    (unwind-protect
+        (let ((display-buffer-alist
+               (list (cons (regexp-quote (buffer-name viewer))
+                           (list (lambda (buffer alist)
+                                   (push (cons buffer alist) asked)
+                                   (display-buffer-same-window buffer nil)))))))
+          (memex-herdr--display viewer)
+          (should (equal (mapcar #'car asked) (list viewer)))
+          (should (get-buffer-window viewer)))
+      (kill-buffer viewer))))
 
 (ert-deftest memex-herdr-keeps-the-shell-outs-diagnostics-out-of-its-json ()
   (let (destination)
@@ -683,6 +675,55 @@ as many answers as it is about."
     (should (null (memex-herdr-tests--of 'shell)))
     (should (null (memex-herdr-tests--of 'view)))
     (should (memex-herdr-tests--reported-p "memex herdr tests terminal"))))
+
+(ert-deftest memex-herdr-switch-session-reads-the-workspace-or-every-agent ()
+  (let* ((here (memex-herdr-tests--agent
+                (memex-herdr-tests--reference "id" memex-herdr-tests--session-id)))
+         (elsewhere (memex-herdr-tests--agent
+                     (memex-herdr-tests--reference
+                      "id" memex-herdr-tests--other-session-id)))
+         (pruned nil)
+         (prompts nil)
+         (pools nil))
+    (memex-herdr-tests--attached here
+        (list (memex-herdr-tests--rows
+               (memex-herdr-tests--row memex-herdr-tests--session-id
+                                       "/tmp/memex-herdr-tests/a.jsonl"
+                                       memex-herdr-tests--agent-cwd nil nil))
+              (memex-herdr-tests--rows
+               (memex-herdr-tests--row memex-herdr-tests--session-id
+                                       "/tmp/memex-herdr-tests/a.jsonl"
+                                       memex-herdr-tests--agent-cwd nil nil)))
+      (cl-letf (((symbol-function 'herdr-agent--send-candidates)
+                 (lambda () (list here elsewhere)))
+                ((symbol-function 'herdr--prune-session-targets)
+                 (lambda (entries) (setq pruned entries)))
+                ((symbol-function 'herdr-agent--workspace-entries)
+                 (lambda (entries) (list (car entries))))
+                ((symbol-function 'herdr-read-agent)
+                 (lambda (prompt entries)
+                   (push prompt prompts)
+                   (push entries pools)
+                   (car entries))))
+        (memex-herdr-switch-session)
+        (memex-herdr-switch-session t))
+      (should (equal pruned (list here elsewhere)))
+      (should (equal (nreverse prompts)
+                     '("Transcript of agent here: " "Transcript of agent: ")))
+      (should (equal (mapcar #'length (nreverse pools)) '(1 2)))
+      (should (equal (length (memex-herdr-tests--of 'view)) 2))
+      (should (commandp 'memex-herdr-switch-session)))))
+
+(ert-deftest memex-herdr-switch-session-refuses-without-an-agent-or-without-herdr ()
+  (cl-letf (((symbol-function 'herdr-agent--send-candidates) (lambda () nil))
+            ((symbol-function 'herdr--prune-session-targets) #'ignore)
+            ((symbol-function 'herdr-agent--workspace-entries) (lambda (_entries) nil))
+            ((symbol-function 'herdr-read-agent)
+             (lambda (&rest _) (ert-fail "Nothing to read"))))
+    (should-error (memex-herdr-switch-session) :type 'user-error)
+    (should-error (memex-herdr-switch-session t) :type 'user-error))
+  (cl-letf (((symbol-function 'require) (lambda (&rest _) nil)))
+    (should-error (memex-herdr--running-agents) :type 'user-error)))
 
 (provide 'memex-herdr-tests)
 ;;; memex-herdr-tests.el ends here
