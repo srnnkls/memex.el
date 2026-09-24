@@ -1564,6 +1564,10 @@ puts the viewer in the workspace the session is pinned to."
        (if display
            (funcall display buffer)
          (display-buffer buffer memex-view-display-action))
+       (when-let* ((window (get-buffer-window buffer t)))
+         (unless (eq (window-frame window) (selected-frame))
+           (select-frame-set-input-focus (window-frame window)))
+         (select-window window))
        (with-current-buffer buffer
          (cond ((null doc-id) (memex-view--show-end))
                ((memex-view--record-position doc-id)

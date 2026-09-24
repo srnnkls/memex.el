@@ -841,6 +841,33 @@ reads as a jump to the wrong place, which is worse than no jump."
             (should (equal displayed (list buffer))))))
     (memex-view-tests--cleanup)))
 
+(ert-deftest memex-view-session-selects-the-window-it-shows-the-record-in ()
+  "An opened transcript takes the focus, with the cursor on its record, even
+where a display function put it beside the window that was selected."
+  (unwind-protect
+      (let* ((records (memex-view-tests--records))
+             (context (memex-view-tests--context records))
+             (origin (get-buffer-create " *memex-view-tests origin*")))
+        (save-window-excursion
+          (switch-to-buffer origin)
+          (cl-letf (((symbol-function 'memex-api-session)
+                     (lambda (_id _path callback &rest _)
+                       (funcall callback context)
+                       nil)))
+            (memex-view-session memex-view-tests--session-id
+                                memex-view-tests--source-path 8803
+                                (lambda (buffer)
+                                  (display-buffer-in-side-window
+                                   buffer '((side . right))))))
+          (let ((buffer (memex-view-tests--session-buffer
+                         memex-view-tests--session-id
+                         memex-view-tests--source-path)))
+            (should (eq (window-buffer (selected-window)) buffer))
+            (should (eq (window-parameter (selected-window) 'window-side) 'right))
+            (should (equal (alist-get 'doc_id (memex-view-record-at-point)) 8803))))
+        (kill-buffer origin))
+    (memex-view-tests--cleanup)))
+
 (ert-deftest memex-view-clean-strips-the-escapes-a-terminal-left-behind ()
   "Tool output is captured from a terminal and carries its SGR sequences.
 Recorded from a memex record: the version banner arrives wrapped in
