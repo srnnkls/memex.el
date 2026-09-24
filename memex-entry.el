@@ -328,9 +328,9 @@ drawn as belongs to whoever is drawing it."
 (defun memex-entry--reason (output position)
   "Return the line of OUTPUT that POSITION falls on, trimmed."
   (let ((start (or (and (> position 0)
-                        (cl-position ?\n output :end position :from-end t))
+                        (cl-position ?\n output :end position :from-end t :test #'eql))
                    -1))
-        (end (or (cl-position ?\n output :start position) (length output))))
+        (end (or (cl-position ?\n output :start position :test #'eql) (length output))))
     (string-trim (substring output (1+ start) end))))
 
 (defun memex-entry-output (entry)
