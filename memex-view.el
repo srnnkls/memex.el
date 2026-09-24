@@ -37,6 +37,11 @@
 (defvar so-long-predicate)
 (defvar memex-entry--fields-cache)
 
+(defvar memex-view-shown-functions nil
+  "Functions called with a transcript buffer once it is shown at its record.
+A caller that opened a transcript for a reason of its own, a search for
+one, takes it up from here.")
+
 (defcustom memex-view-display-action '(display-buffer-full-frame)
   "The `display-buffer' action a transcript is shown under.
 A whole session read a few lines at a time is not read, so the viewer
@@ -1555,7 +1560,8 @@ puts the viewer in the workspace the session is pinned to."
                  (memex-view--record-position doc-id)))
                (t (goto-char (point-min))
                   (message "memex: this session renders no record %s"
-                           doc-id))))))))
+                           doc-id))))
+       (run-hook-with-args 'memex-view-shown-functions buffer)))))
 
 (defun memex-view--entry-section (position)
   "Return the section of the record covering POSITION, or nil."
