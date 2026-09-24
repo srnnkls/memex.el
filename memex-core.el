@@ -71,8 +71,14 @@ cannot signal to the caller."
     (message "memex: %S" (cons symbol data))))
 
 (defun memex--stderr-text (buffer)
-  "Return what memex wrote to BUFFER."
+  "Return what memex wrote to BUFFER, once its pipe has delivered all of it.
+The pipe is read apart from the process it belongs to, so the process
+can have exited while its last words are still in the pipe."
   (when (buffer-live-p buffer)
+    (when-let* ((pipe (get-buffer-process buffer)))
+      (let ((deadline (+ (float-time) 1.0)))
+        (while (and (process-live-p pipe) (< (float-time) deadline))
+          (accept-process-output pipe 0.05 nil t))))
     (with-current-buffer buffer (buffer-string))))
 
 (defun memex--response-payload (decoded)
@@ -151,6 +157,8 @@ or the request does not encode."
                  (unless (process-get process 'memex-cancelled)
                    (memex--dispatch-result status output stderr-text executable
                                            callback errback))))))))
+    (when-let* ((pipe (get-buffer-process stderr)))
+      (set-process-sentinel pipe #'ignore))
     (condition-case nil
         (progn (process-send-string process request)
                (process-send-eof process))
