@@ -97,8 +97,8 @@ record was written, right-aligned under Marginalia. With Consult, the
 highlighted candidate is drawn whole in `*memex preview*` — the excerpt in the
 row is a window into it — at `memex-search-preview-key`, `C-SPC` by default.
 Each preview renders a record, so the selection does not drag one along on its
-way to the row that was wanted; set the key to `any` for a preview that follows
-the selection.
+way to the row that was wanted; set `memex-search-auto-preview` for a preview
+that follows the selection.
 
 `memex-search-session-hit` chooses the session's opening match and excerpt:
 `newest` (default) or `best`. This selects among returned hits; it does not

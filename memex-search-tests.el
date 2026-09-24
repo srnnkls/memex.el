@@ -52,6 +52,11 @@
 (defvar memex-search-roles)
 (defvar memex-search--asked-roles)
 (defvar memex-search--pending-roles)
+(defvar memex-search-auto-preview)
+(defvar memex-search-highlight-function)
+(defvar memex-search--query)
+(defvar memex-search--opened-queries)
+(defvar memex-view-shown-functions)
 
 (defconst memex-search-tests--sink-answer (list 'candidates)
   "What the stub sink answers a nil action with.
@@ -999,6 +1004,102 @@ back when the search ends."
               (should-not (buffer-live-p preview)))))
       (kill-buffer origin))))
 
+(ert-deftest memex-search-preview-goes-where-a-transcript-rule-puts-it ()
+  "A `display-buffer-alist' rule written for transcripts places the
+preview too, the calling window keeps its buffer, and the window the rule
+opened closes when the search ends."
+  (skip-unless (featurep 'magit-section))
+  (let ((origin (get-buffer-create "*memex-search-tests origin*"))
+        (display-buffer-alist
+         '(("\\`\\*memex session " display-buffer-in-side-window
+            (side . right))))
+        (fetches nil))
+    (unwind-protect
+        (save-window-excursion
+          (switch-to-buffer origin)
+          (memex-search-tests--with-fetches fetches
+            (memex-search--preview (memex-search-tests--candidate 8010))
+            (funcall (cdar fetches) (memex-search-tests--session 20))
+            (let* ((preview (get-buffer memex-search-preview-buffer-name))
+                   (window (get-buffer-window preview)))
+              (should (eq (window-parameter window 'window-side) 'right))
+              (should (eq (window-buffer (selected-window)) origin))
+              (funcall (memex-search--state) 'exit nil)
+              (should-not (window-live-p window))
+              (should-not (buffer-live-p preview))
+              (should (eq (window-buffer (selected-window)) origin)))))
+      (kill-buffer origin))))
+
+(ert-deftest memex-search-query-regexp-matches-any-term-literally ()
+  (let ((regexp (memex-search-query-regexp "foo.bar  baz")))
+    (should (string-match-p regexp "a baz b"))
+    (should (string-match-p regexp "x foo.bar y"))
+    (should-not (string-match-p regexp "fooxbar"))))
+
+(ert-deftest memex-search-preview-hands-the-query-to-the-highlighter ()
+  "The preview marks the query through `memex-search-highlight-function',
+in the window the hit is shown in and once point is on it."
+  (skip-unless (featurep 'magit-section))
+  (let ((origin (get-buffer-create "*memex-search-tests origin*"))
+        (memex-search--query "record")
+        (marked nil)
+        (fetches nil))
+    (unwind-protect
+        (save-window-excursion
+          (switch-to-buffer origin)
+          (memex-search-tests--with-fetches fetches
+            (let ((memex-search-highlight-function
+                   (lambda (window query)
+                     (push (list (window-buffer window) query
+                                 (alist-get 'doc_id
+                                            (with-selected-window window
+                                              (memex-view-record-at-point))))
+                           marked))))
+              (memex-search--preview (memex-search-tests--candidate 8010))
+              (funcall (cdar fetches) (memex-search-tests--session 20))
+              (should (equal marked
+                             (list (list (get-buffer memex-search-preview-buffer-name)
+                                         "record" 8010))))
+              (funcall (memex-search--state) 'exit nil))))
+      (kill-buffer origin))))
+
+(ert-deftest memex-search-marks-a-transcript-it-opened-once-it-is-shown ()
+  "A transcript a search opened is marked with the search's query when the
+viewer shows it, and only that once."
+  (let ((memex-search--query "alfa bravo")
+        (memex-search--opened-queries nil)
+        (marked nil)
+        (transcript (generate-new-buffer " *memex-search-tests transcript*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'memex-herdr-open-session) nil)
+                  ((symbol-function 'memex-view-session) #'ignore))
+          (let ((memex-search-highlight-function
+                 (lambda (window query) (push (cons (window-buffer window) query)
+                                              marked))))
+            (memex-search--open '((session_id . "s1") (source_path . "/tmp/s1.jsonl")
+                                  (doc_id . 7)))
+            (with-current-buffer transcript
+              (setq-local memex-view-session-id "s1"
+                          memex-view-source-path "/tmp/s1.jsonl"))
+            (save-window-excursion
+              (switch-to-buffer transcript)
+              (run-hook-with-args 'memex-view-shown-functions transcript)
+              (run-hook-with-args 'memex-view-shown-functions transcript))
+            (should (equal marked (list (cons transcript "alfa bravo"))))))
+      (kill-buffer transcript))))
+
+(ert-deftest memex-search-highlights-with-hi-lock-by-default ()
+  (should (eq (default-value 'memex-search-highlight-function)
+              #'memex-search-highlight-with-hi-lock))
+  (let ((buffer (generate-new-buffer " *memex-search-tests hi-lock*")))
+    (unwind-protect
+        (save-window-excursion
+          (switch-to-buffer buffer)
+          (insert "one Bravo two")
+          (memex-search-highlight-with-hi-lock (selected-window) "bravo")
+          (should hi-lock-interactive-patterns))
+      (kill-buffer buffer))))
+
 (ert-deftest memex-search-preview-fetches-a-session-once-per-search ()
   "Moving between hits of one session draws from the session fetched first."
   (skip-unless (featurep 'magit-section))
@@ -1059,6 +1160,25 @@ along behind it: the search hands consult the key it waits for."
       (should (equal memex-search-preview-key "C-SPC"))
       (let ((memex-search-preview-key 'any))
         (memex-search--consult 'lexical "alfa")
+        (should (eq (plist-get options :preview-key) 'any))))))
+
+(ert-deftest memex-search-previews-as-the-selection-moves-when-asked-to ()
+  "The preview waits for its key unless `memex-search-auto-preview' has it
+follow the selection."
+  (let ((options nil))
+    (cl-letf (((symbol-function 'consult--async-pipeline) (lambda (&rest _) nil))
+              ((symbol-function 'consult--async-min-input) (lambda (&rest _) nil))
+              ((symbol-function 'consult--async-throttle) (lambda (&rest _) nil))
+              ((symbol-function 'consult--lookup-member) (lambda (&rest _) nil))
+              ((symbol-function 'consult--read)
+               (lambda (_table &rest rest) (setq options rest) nil)))
+      (let ((memex-search-auto-preview nil))
+        (memex-search--consult 'lexical "alfa")
+        (should (functionp (plist-get options :state)))
+        (should (equal (plist-get options :preview-key) memex-search-preview-key)))
+      (let ((memex-search-auto-preview t))
+        (memex-search--consult 'lexical "alfa")
+        (should (functionp (plist-get options :state)))
         (should (eq (plist-get options :preview-key) 'any))))))
 
 (ert-deftest memex-search-asks-for-the-roles-a-query-is-put-to ()
