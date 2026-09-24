@@ -17,10 +17,11 @@
 ;; killed one, and its callback is invoked by hand so the order two
 ;; requests complete in is the test's to choose.
 ;;
-;; Consult is not on the load path under `emacs -Q', so the fallback
-;; tests reach the consult-free branch with nothing stubbed out.  They
-;; call the command as `(memex-search MODE INITIAL)', the arguments a
-;; mode switch re-invokes it with once it has exited its session.
+;; The fallback tests turn `memex-search--consult-available-p' off, so
+;; they reach the consult-free branch whether consult is installed or
+;; not.  They call the command as `(memex-search MODE INITIAL)', the
+;; arguments a mode switch re-invokes it with once it has exited its
+;; session.
 ;;
 ;; A search answers with sessions, one candidate to a session, the way
 ;; memex's own `SessionSummary' does; `memex-search-group-by-session'
@@ -523,8 +524,8 @@ a completion UI and every consumer of a candidate find them."
             (memex-search-group-by-session nil)
             (supplied 'not-called)
             (messages nil))
-        (should-not (featurep 'consult))
-        (cl-letf (((symbol-function 'memex-api-search)
+        (cl-letf (((symbol-function 'memex-search--consult-available-p) #'ignore)
+                  ((symbol-function 'memex-api-search)
                    (memex-search-tests--answering-stub records))
                   ((symbol-function 'read-string)
                    (lambda (_prompt &optional initial &rest _) (or initial "alfa")))
@@ -554,7 +555,8 @@ a completion UI and every consumer of a candidate find them."
 (ert-deftest memex-search-without-consult-refuses-a-query-with-no-hits ()
   (unwind-protect
       (let ((memex-search--consult-noted nil))
-        (cl-letf (((symbol-function 'memex-api-search)
+        (cl-letf (((symbol-function 'memex-search--consult-available-p) #'ignore)
+                  ((symbol-function 'memex-api-search)
                    (memex-search-tests--answering-stub nil))
                   ((symbol-function 'read-string)
                    (lambda (_prompt &optional initial &rest _)
@@ -575,7 +577,8 @@ a completion UI and every consumer of a candidate find them."
             (memex-search--consult-noted nil)
             (memex-search-group-by-session nil)
             (supplied 'not-called))
-        (cl-letf (((symbol-function 'memex-api-search)
+        (cl-letf (((symbol-function 'memex-search--consult-available-p) #'ignore)
+                  ((symbol-function 'memex-api-search)
                    (memex-search-tests--answering-stub records))
                   ((symbol-function 'read-string)
                    (lambda (_prompt &optional initial &rest _) (or initial "")))
@@ -754,7 +757,8 @@ when it is not, which is the same fork `memex-org-follow' takes."
       (let ((records (memex-search-tests--matches))
             (memex-search--consult-noted t)
             (memex-search-group-by-session nil))
-        (cl-letf (((symbol-function 'memex-api-search)
+        (cl-letf (((symbol-function 'memex-search--consult-available-p) #'ignore)
+                  ((symbol-function 'memex-api-search)
                    (memex-search-tests--answering-stub records))
                   ((symbol-function 'read-string)
                    (lambda (_prompt &optional initial &rest _) (or initial "alfa")))
@@ -773,7 +777,8 @@ when it is not, which is the same fork `memex-org-follow' takes."
                                        :doc-id 9003))))
             (should (equal value (car records)))))
         (setq memex-search-tests--opened nil)
-        (cl-letf (((symbol-function 'memex-api-search)
+        (cl-letf (((symbol-function 'memex-search--consult-available-p) #'ignore)
+                  ((symbol-function 'memex-api-search)
                    (memex-search-tests--answering-stub records))
                   ((symbol-function 'read-string)
                    (lambda (_prompt &optional initial &rest _) (or initial "alfa")))

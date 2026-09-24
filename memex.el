@@ -850,6 +850,10 @@ recent window."
                                 (mapcar #'symbol-name memex-search-modes)
                                 nil t))))
 
+(defun memex-search--consult-available-p ()
+  "Return non-nil when consult can be loaded to search as you type."
+  (require 'consult nil t))
+
 (defun memex-search--run (mode initial grouped scope &optional roles)
   "Search in MODE from INITIAL, GROUPED by session and restricted to SCOPE.
 ROLES are the roles to ask for: `every' for all of them, nil for
@@ -861,7 +865,7 @@ ROLES are the roles to ask for: `every' for all of them, nil for
                                          ((eq roles 'every) nil)
                                          (t roles)))
         (memex-search--static-query nil))
-    (if (require 'consult nil t)
+    (if (memex-search--consult-available-p)
         (memex-search--consult mode initial)
       (memex-search--static mode initial))))
 
