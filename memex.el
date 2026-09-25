@@ -4,7 +4,7 @@
 
 ;; Author: Sören Nikolaus <soeren@code17.io>
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1"))
+;; Package-Requires: ((emacs "29.1") (transient "0.9.0") (magit-section "4.0.0") (lectio "0.1.0"))
 ;; Keywords: convenience, tools, matching
 ;; URL: https://github.com/srnnkls/memex.el
 

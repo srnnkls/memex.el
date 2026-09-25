@@ -16,7 +16,7 @@
 (source 'melpa)
 
 (depends-on "emacs" "29.1")
-(depends-on "lectio" "0.1.0")
+(depends-on "lectio" :repo "srnnkls/lectio" :fetcher 'github)
 (depends-on "magit-section" "4.0.0")
 (depends-on "transient" "0.9.0")
 
