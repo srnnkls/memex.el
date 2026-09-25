@@ -24,9 +24,11 @@ memex.el needs Emacs 29.1 or newer and the `memex` binary on `exec-path`. Instal
 [README](https://github.com/nicosuave/memex#install) describes and build an index with
 `memex index`. [The memex backend](GUIDE.md#the-memex-backend) covers what memex.el asks of it.
 
-The package depends on `magit-section`, `transient` and [lectio](https://github.com/srnnkls/lectio),
-which renders an agent's markdown. Put a checkout of this repository and of lectio on the load
-path:
+The package declares `magit-section`, `transient` and [lectio](https://github.com/srnnkls/lectio),
+which renders an agent's markdown, so installing it pulls them in. lectio is in no package
+archive yet: install it first with `M-x package-vc-install RET https://github.com/srnnkls/lectio
+RET`, then memex.el the same way. With checkouts, install `magit-section` and `transient` yourself
+and put this repository and lectio on the load path:
 
 ```elisp
 (use-package memex
