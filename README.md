@@ -24,17 +24,28 @@ memex.el needs Emacs 29.1 or newer and the `memex` binary on `exec-path`. Instal
 [README](https://github.com/nicosuave/memex#install) describes and build an index with
 `memex index`. [The memex backend](GUIDE.md#the-memex-backend) covers what memex.el asks of it.
 
-Put a checkout of this repository on the load path:
+memex.el renders markdown through [lectio](https://github.com/srnnkls/lectio), which no package
+archive carries yet, so install lectio first. On Emacs 30 or newer:
 
 ```elisp
+(use-package lectio
+  :vc (:url "https://github.com/srnnkls/lectio" :rev :newest))
+
 (use-package memex
-  :load-path "~/projects/memex.el"
+  :vc (:url "https://github.com/srnnkls/memex.el" :rev :newest)
   :commands (memex-search memex-search-messages memex-search-sessions
              memex-view-session memex-usage))
 
 (use-package memex-status
-  :load-path "~/projects/memex.el"
   :commands (memex-status memex-project-status))
+```
+
+On Emacs 29, run `M-x package-vc-install` on https://github.com/srnnkls/lectio, then on
+https://github.com/srnnkls/memex.el. On Doom Emacs, add both to `packages.el`:
+
+```elisp
+(package! lectio :recipe (:host github :repo "srnnkls/lectio"))
+(package! memex :recipe (:host github :repo "srnnkls/memex.el"))
 ```
 
 Each integration is a file of its own and loads only where its partner does:
