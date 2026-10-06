@@ -502,8 +502,9 @@ probed for on the three branches that never touch it."
   "The directory herdr reports the attached agent working in.")
 
 (defun memex-herdr-tests--agent (reference)
-  "Return a herdr agent entry on terminal `term-3' reporting REFERENCE."
+  "Return a herdr agent entry on `/srv/b' terminal `term-3' reporting REFERENCE."
   `((terminal_id . "term-3")
+    (server_key . "/srv/b")
     (name . "review")
     (agent . "claude")
     (pane_id . "pane-7")
@@ -539,8 +540,13 @@ as many answers as it is about."
                     (memex-herdr-tests--queue ,answers))
                    ((symbol-function 'executable-find)
                     (memex-herdr-tests--which))
-                   ((symbol-function 'memex-anchor--agents)
+                   ((symbol-function 'herdr-agent--send-candidates)
                     (lambda () (delq nil (list ,agent))))
+                   ((symbol-function 'herdr--prune-session-targets) #'ignore)
+                   ((symbol-function 'herdr-agent-buffer-target)
+                    (lambda (buffer)
+                      (when (local-variable-p 'herdr-terminal-id buffer)
+                        (cons "/srv/b" (buffer-local-value 'herdr-terminal-id buffer)))))
                    ((symbol-function 'memex-view-session)
                     (lambda (session-id source-path &optional doc-id display)
                       (push (list 'view session-id source-path doc-id display)
@@ -592,6 +598,45 @@ as many answers as it is about."
       (memex-herdr--sessions)
       (should (equal destination '(t nil))))))
 
+(ert-deftest memex-herdr-open-agent-session-indexes-a-session-the-window-lacks ()
+  "A session memex has not scanned yet is indexed once and looked up again."
+  (let ((indexed 0))
+    (cl-letf (((symbol-function 'memex-api-index)
+               (lambda (callback &rest _)
+                 (setq indexed (1+ indexed))
+                 (funcall callback '((records_added . 1)))
+                 nil)))
+      (memex-herdr-tests--attached
+          (memex-herdr-tests--agent
+           (memex-herdr-tests--reference "id" memex-herdr-tests--session-id))
+          (list (memex-herdr-tests--rows)
+                (memex-herdr-tests--rows)
+                (memex-herdr-tests--rows
+                 (memex-herdr-tests--row memex-herdr-tests--session-id
+                                         "/tmp/memex-herdr-tests/a.jsonl"
+                                         memex-herdr-tests--agent-cwd nil nil)))
+        (memex-herdr-open-agent-session)
+        (should (equal indexed 1))
+        (should (equal (length (memex-herdr-tests--of 'shell)) 3))
+        (should (equal (seq-take (cdr (car (memex-herdr-tests--of 'view))) 2)
+                       (list memex-herdr-tests--session-id
+                             "/tmp/memex-herdr-tests/a.jsonl")))))))
+
+(ert-deftest memex-herdr-open-agent-session-refuses-a-session-indexing-does-not-find ()
+  (let ((indexed 0))
+    (cl-letf (((symbol-function 'memex-api-index)
+               (lambda (callback &rest _)
+                 (setq indexed (1+ indexed))
+                 (funcall callback '((records_added . 0)))
+                 nil)))
+      (memex-herdr-tests--attached
+          (memex-herdr-tests--agent
+           (memex-herdr-tests--reference "id" memex-herdr-tests--session-id))
+          (list (memex-herdr-tests--rows))
+        (should-error (memex-herdr-open-agent-session) :type 'user-error)
+        (should (equal indexed 1))
+        (should-not (memex-herdr-tests--of 'view))))))
+
 (ert-deftest memex-herdr-open-agent-session-views-the-session-herdr-reports-by-id ()
   (memex-herdr-tests--attached
       (memex-herdr-tests--agent
@@ -615,6 +660,27 @@ as many answers as it is about."
                      (list memex-herdr-tests--session-id
                            "/tmp/memex-herdr-tests/a.jsonl")))
       (should (commandp 'memex-herdr-open-agent-session)))))
+
+(ert-deftest memex-herdr-open-agent-session-finds-the-agent-on-its-own-server ()
+  "The same terminal id on another herdr server is a different agent."
+  (let ((elsewhere (append '((server_key . "/srv/a"))
+                           (memex-herdr-tests--agent
+                            (memex-herdr-tests--reference
+                             "id" memex-herdr-tests--other-session-id)))))
+    (memex-herdr-tests--attached
+        (memex-herdr-tests--agent
+         (memex-herdr-tests--reference "id" memex-herdr-tests--session-id))
+        (list (memex-herdr-tests--rows
+               (memex-herdr-tests--row memex-herdr-tests--session-id
+                                       "/tmp/memex-herdr-tests/a.jsonl"
+                                       memex-herdr-tests--agent-cwd nil nil)))
+      (cl-letf* ((attached (symbol-function 'herdr-agent--send-candidates))
+                 ((symbol-function 'herdr-agent--send-candidates)
+                  (lambda () (cons elsewhere (funcall attached)))))
+        (memex-herdr-open-agent-session))
+      (should (equal (seq-take (cdr (car (memex-herdr-tests--of 'view))) 2)
+                     (list memex-herdr-tests--session-id
+                           "/tmp/memex-herdr-tests/a.jsonl"))))))
 
 (ert-deftest memex-herdr-open-agent-session-views-the-session-herdr-reports-by-path ()
   (memex-herdr-tests--attached

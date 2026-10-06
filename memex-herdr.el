@@ -27,6 +27,8 @@
 ;; is running.  herdr reports that session by id or by transcript path and
 ;; the viewer is keyed by both, so the same session window pairs them.
 ;;
+;; A session the window does not hold is indexed once and looked up again.
+;;
 ;; herdr and the `+ws-pin' helpers of the user's Doom configuration are
 ;; both optional: each is probed for at call time and its absence costs
 ;; only the feature it carries.
@@ -36,6 +38,7 @@
 (require 'seq)
 (require 'subr-x)
 (require 'memex-core)
+(require 'memex-api)
 (require 'memex-completion)
 (require 'memex-view)
 (require 'transient)
@@ -132,14 +135,27 @@ which every caller reports as the session it could not find."
             (memex--decode (buffer-string)))))
     (error nil)))
 
+(defun memex-herdr--indexed (lookup)
+  "Return what LOOKUP answers, indexing once when it answers nothing."
+  (or (funcall lookup)
+      (progn
+        (message "memex: indexing...")
+        (memex-completion--fetch
+         (lambda (callback errback)
+           (memex-api-index callback :errback errback)))
+        (message nil)
+        (funcall lookup))))
+
 (defun memex-herdr--row (session-id source-path source)
   "Return what memex knows of the session SESSION-ID at SOURCE-PATH.
 The window of recent SOURCE sessions is read in one shell-out and
 matched here on the two fields together."
-  (seq-find (lambda (row)
-              (and (equal (alist-get 'session_id row) session-id)
-                   (equal (alist-get 'source_path row) source-path)))
-            (memex-herdr--sessions "--source" source)))
+  (memex-herdr--indexed
+   (lambda ()
+     (seq-find (lambda (row)
+                 (and (equal (alist-get 'session_id row) session-id)
+                      (equal (alist-get 'source_path row) source-path)))
+               (memex-herdr--sessions "--source" source)))))
 
 (defun memex-herdr--directory (row)
   "Return the directory a resume of ROW begins in.
@@ -226,20 +242,21 @@ Missing transcripts or resume commands open the indexed session."
 
 ;;;; Reading the session an attached agent is running
 
-(defvar herdr-terminal-id)
-(declare-function memex-anchor--agents "memex-anchor" ())
+(declare-function herdr-agent-buffer-target "herdr-agent" (buffer))
 
 (defun memex-herdr--attached-agent (buffer)
   "Return the herdr agent whose terminal BUFFER shows, or nil.
-herdr stamps `herdr-terminal-id' on every buffer it attaches, which is
-what tells an agent's own terminal apart from any other buffer."
+The agent is looked for on every herdr server Emacs talks to, matched by
+the server and terminal herdr stamped on BUFFER when it attached it."
   (when-let* (((buffer-live-p buffer))
-              ((local-variable-p 'herdr-terminal-id buffer))
-              (terminal (buffer-local-value 'herdr-terminal-id buffer))
-              ((require 'memex-anchor nil t)))
+              ((or (fboundp 'herdr-agent-buffer-target)
+                   (require 'herdr-agent nil t)))
+              (target (herdr-agent-buffer-target buffer)))
     (seq-find (lambda (agent)
-                (equal (alist-get 'terminal_id agent) terminal))
-              (memex-anchor--agents))))
+                (equal (cons (alist-get 'server_key agent)
+                             (alist-get 'terminal_id agent))
+                       target))
+              (memex-herdr--running-agents))))
 
 (defun memex-herdr--ref-row (reference directory)
   "Return the session memex indexed for herdr's REFERENCE, or nil.
@@ -255,9 +272,11 @@ the whole window."
     (let ((match (lambda (rows)
                    (seq-find (lambda (row) (equal (alist-get field row) value))
                              rows))))
-      (or (and directory
-               (funcall match (memex-herdr--sessions "--cwd" directory)))
-          (funcall match (memex-herdr--sessions))))))
+      (memex-herdr--indexed
+       (lambda ()
+         (or (and directory
+                  (funcall match (memex-herdr--sessions "--cwd" directory)))
+             (funcall match (memex-herdr--sessions))))))))
 
 ;;;###autoload
 (defun memex-herdr-session-scope (reference &optional directory)
