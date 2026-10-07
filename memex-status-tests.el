@@ -420,7 +420,10 @@ answered with and must not spend a request."
   (dolist (key '("RET" "o" "r" "w" "s" "S" "f" "O" "L" "g" "q"))
     (let ((bound (keymap-lookup memex-status-mode-map key))
           (offered (memex-status-tests--suffix-command
-                    'memex-status-dispatch key)))
+                    'memex-status-dispatch
+                    (or (and (featurep 'evil) (boundp 'memex-evil-status-renames)
+                             (alist-get key memex-evil-status-renames nil nil #'equal))
+                        key))))
       (should (commandp bound))
       (should (eq bound offered)))))
 

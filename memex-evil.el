@@ -63,5 +63,42 @@ the transcript borrowed rather than handing it back."
 
 (with-eval-after-load 'evil (memex-evil-setup))
 
+(declare-function transient-suffix-put "transient" (prefix loc prop value))
+(declare-function evil-make-overriding-map "ext:evil-core" (keymap &optional state copy))
+(defvar evil-normal-state-map)
+(defvar evil-motion-state-map)
+(defvar memex-status-mode-map)
+
+(defconst memex-evil-status-renames '(("g" . "gr") ("P" . "p"))
+  "Dashboard keys that evil's normal state keeps for itself.
+Each pair is a key in `memex-status-mode-map' and the key its command
+moves to, leaving evil its `g' prefix and its `P' paste.")
+
+(defun memex-evil--own (key)
+  "Return evil's normal-state binding of KEY, a fresh prefix where it is one.
+The fresh prefix inherits evil's, so binding into it leaves evil's alone."
+  (let ((own (delq nil (list (keymap-lookup evil-normal-state-map key)
+                             (keymap-lookup evil-motion-state-map key)))))
+    (if (keymapp (car own))
+        (let ((prefix (make-sparse-keymap)))
+          (set-keymap-parent prefix (make-composed-keymap (seq-filter #'keymapp own)))
+          prefix)
+      (car own))))
+
+(defun memex-evil-status-setup ()
+  "Put the dashboard's keys ahead of evil's normal state.
+Keys other packages add to `memex-status-mode-map' later take effect
+too, since evil consults the keymap itself."
+  (evil-make-overriding-map memex-status-mode-map 'normal)
+  (pcase-dolist (`(,key . ,_) memex-evil-status-renames)
+    (evil-define-key* 'normal memex-status-mode-map (kbd key) (memex-evil--own key)))
+  (pcase-dolist (`(,key . ,moved) memex-evil-status-renames)
+    (let ((command (keymap-lookup memex-status-mode-map key)))
+      (evil-define-key* 'normal memex-status-mode-map (kbd moved) command)
+      (transient-suffix-put 'memex-status-dispatch command :key moved))))
+
+(with-eval-after-load 'evil
+  (with-eval-after-load 'memex-status (memex-evil-status-setup)))
+
 (provide 'memex-evil)
 ;;; memex-evil.el ends here
