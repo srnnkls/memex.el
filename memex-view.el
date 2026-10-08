@@ -1309,16 +1309,31 @@ that process is what `memex-cancel-rpc' takes."
 A window `display-buffer' made for the transcript goes when the
 transcript does.  One the viewer claimed from something already
 standing, a popup holding a terminal say, is that other thing's window:
-it stays, showing again what it was opened for."
+it stays, showing again what it was opened for.  A window that records
+nothing about its making, as popup frameworks leave theirs, was claimed
+when it showed something other than a transcript before."
   (interactive)
   (let* ((buffer (current-buffer))
          (window (selected-window))
-         (opened-for (nth 3 (window-parameter window 'quit-restore))))
-    (if (or (null opened-for) (eq opened-for buffer))
-        (quit-restore-window window 'kill)
-      (when (buffer-live-p opened-for)
-        (set-window-buffer window opened-for))
-      (kill-buffer buffer))))
+         (opened-for
+          (or (nth 3 (window-parameter window 'quit-restore))
+              (seq-some (lambda (entry)
+                          (let ((held (car entry)))
+                            (and (buffer-live-p held)
+                                 (not (eq (buffer-local-value 'major-mode held)
+                                          'memex-session-mode))
+                                 held)))
+                        (window-prev-buffers window)))))
+    (cond ((and opened-for (not (eq opened-for buffer)))
+           (when (buffer-live-p opened-for)
+             (set-window-buffer window opened-for))
+           (kill-buffer buffer))
+          ((or (window-parameter window 'quit-restore)
+               (not (window-deletable-p window)))
+           (quit-restore-window window 'kill))
+          (t
+           (delete-window window)
+           (kill-buffer buffer)))))
 
 (defun memex-view--refresh-shown (window)
   "Refresh the transcript WINDOW shows once it is the selected window.

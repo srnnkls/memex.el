@@ -476,6 +476,43 @@ finds it."
       (kill-buffer elsewhere)
       (memex-view-tests--cleanup))))
 
+(ert-deftest memex-view-quit-gives-an-unrecorded-claimed-window-back ()
+  "A popup that keeps no `quit-restore' still gets back what it showed."
+  (let ((held (generate-new-buffer "*memex view tests held*")))
+    (unwind-protect
+        (save-window-excursion
+          (let* ((buffer (memex-view-tests--open
+                          (memex-view-tests--records)
+                          memex-view-tests--session-id
+                          memex-view-tests--source-path))
+                 (window (display-buffer held '(display-buffer-pop-up-window))))
+            (set-window-parameter window 'quit-restore nil)
+            (set-window-buffer window buffer)
+            (with-selected-window window (memex-view-quit))
+            (should (window-live-p window))
+            (should (eq (window-buffer window) held))
+            (should-not (buffer-live-p buffer))))
+      (kill-buffer held)
+      (memex-view-tests--cleanup))))
+
+(ert-deftest memex-view-quit-takes-an-unrecorded-window-it-opened ()
+  "A popup that keeps no `quit-restore' and held only transcripts goes."
+  (let ((elsewhere (generate-new-buffer "*memex view tests elsewhere*")))
+    (unwind-protect
+        (save-window-excursion
+          (let ((buffer (memex-view-tests--open
+                         (memex-view-tests--records)
+                         memex-view-tests--session-id
+                         memex-view-tests--source-path)))
+            (set-window-buffer (selected-window) elsewhere)
+            (let ((window (display-buffer buffer '(display-buffer-pop-up-window))))
+              (set-window-parameter window 'quit-restore nil)
+              (with-selected-window window (memex-view-quit))
+              (should-not (window-live-p window))
+              (should-not (buffer-live-p buffer)))))
+      (kill-buffer elsewhere)
+      (memex-view-tests--cleanup))))
+
 (ert-deftest memex-view-prepends-history-without-moving-the-reader ()
   (save-window-excursion
     (unwind-protect
