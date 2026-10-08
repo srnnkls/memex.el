@@ -202,11 +202,10 @@ it."
       (ert-skip "memex has nothing indexed"))
     (memex-tests--assert-records pairs)))
 
-(ert-deftest memex-tests-resume-without-the-binary-names-it-not-the-window ()
-  "A missing memex is reported as missing, not as a lookup window too short.
+(ert-deftest memex-tests-resume-without-the-binary-names-it-not-the-session ()
+  "A missing memex is reported as missing, not as a session it has not indexed.
 The session lookup shells memex out, so with nothing to run it comes
-back empty and reaches the same outcome an out-of-window session
-reaches: raise `memex-resume-lookup-limit', which would not help.  The
+back empty and reaches the outcome an unindexed session reaches.  The
 readiness check is where the two part, and it must part before anything
 is run."
   (let* ((path (make-temp-file "memex-tests-" nil ".jsonl"))
@@ -219,8 +218,7 @@ is run."
           (should (null (memex-herdr-tests--of 'tab-create)))
           (should (null (memex-herdr-tests--of 'send-text)))
           (should (memex-herdr-tests--reported-p memex-executable))
-          (should-not (memex-herdr-tests--reported-p
-                       "memex-resume-lookup-limit")))
+          (should-not (memex-herdr-tests--reported-p "indexed no session")))
       (delete-file path))))
 
 (provide 'memex-tests)

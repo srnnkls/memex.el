@@ -16,18 +16,16 @@
 ;; shown in the read-only viewer instead.
 ;;
 ;; The resume command is not part of the RPC surface, so it is read from
-;; `memex sessions --json-array'.  That subcommand has no session filter:
-;; it answers with a window of recent sessions, `memex-resume-lookup-limit'
-;; long, which is searched here for the `session_id' at the `source_path'
-;; asked for - a `session_id' names a session only along with the
-;; transcript it was read from.
+;; `memex sessions --json-array', filtered to the `session_id' at the
+;; `source_path' asked for - a `session_id' names a session only along
+;; with the transcript it was read from.
 ;;
 ;; `memex-herdr-open-agent-session' goes the other way: from the terminal
 ;; of an agent herdr attached, to the indexed transcript of the session it
 ;; is running.  herdr reports that session by id or by transcript path and
-;; the viewer is keyed by both, so the same session window pairs them.
-;;
-;; A session the window does not hold is indexed once and looked up again.
+;; the viewer is keyed by both, so the same lookup pairs them.  A session
+;; memex has not indexed yet is indexed once, in the background, and
+;; looked up again.
 ;;
 ;; herdr and the `+ws-pin' helpers of the user's Doom configuration are
 ;; both optional: each is probed for at call time and its absence costs
@@ -61,12 +59,8 @@
 (declare-function herdr-agent--workspace-entries "herdr-agent" (entries))
 (declare-function transient-get-suffix "transient" (prefix loc))
 
-(defcustom memex-resume-lookup-limit 5000
-  "Number of recent sessions the resume lookup reads before matching.
-The window has to be long enough to reach back to the session being
-resumed, since it is the only filter `memex sessions' offers."
-  :type 'natnum
-  :group 'memex)
+(defconst memex-herdr--branch-window "50"
+  "How many of a directory's newest sessions are searched for a branch.")
 
 (defcustom memex-herdr-display-action nil
   "How the bridge shows the viewer it opens from a herdr terminal.
@@ -118,44 +112,26 @@ here rather than at the head of a resume."
                              (error-message-string failure)))))
 
 (defun memex-herdr--sessions (&rest filters)
-  "Return the window of recent sessions FILTERS narrows, newest first.
-FILTERS are the arguments that go between `sessions --json-array' and
-the limit.  A shell-out that cannot run at all answers with no rows,
-which every caller reports as the session it could not find."
+  "Return the sessions FILTERS select, newest first.
+FILTERS are the arguments that follow `sessions --json-array'.  A
+shell-out that cannot run at all answers with no rows, which every
+caller reports as the session it could not find."
   (condition-case nil
       (with-temp-buffer
         (let ((default-directory temporary-file-directory))
           (when (eq 0 (apply #'call-process
                              memex-executable nil '(t nil) nil
-                             "sessions" "--json-array"
-                             (append filters
-                                     (list "--limit"
-                                           (number-to-string
-                                            memex-resume-lookup-limit)))))
+                             "sessions" "--json-array" filters))
             (memex--decode (buffer-string)))))
     (error nil)))
 
-(defun memex-herdr--indexed (lookup)
-  "Return what LOOKUP answers, indexing once when it answers nothing."
-  (or (funcall lookup)
-      (progn
-        (message "memex: indexing...")
-        (memex-completion--fetch
-         (lambda (callback errback)
-           (memex-api-index callback :errback errback)))
-        (message nil)
-        (funcall lookup))))
-
-(defun memex-herdr--row (session-id source-path source)
-  "Return what memex knows of the session SESSION-ID at SOURCE-PATH.
-The window of recent SOURCE sessions is read in one shell-out and
-matched here on the two fields together."
-  (memex-herdr--indexed
-   (lambda ()
-     (seq-find (lambda (row)
-                 (and (equal (alist-get 'session_id row) session-id)
-                      (equal (alist-get 'source_path row) source-path)))
-               (memex-herdr--sessions "--source" source)))))
+(defun memex-herdr--row (session-id source-path _source)
+  "Return what memex knows of the session SESSION-ID at SOURCE-PATH."
+  (seq-find (lambda (row)
+              (and (equal (alist-get 'session_id row) session-id)
+                   (equal (alist-get 'source_path row) source-path)))
+            (memex-herdr--sessions "--session-id" session-id
+                                   "--source-path" source-path)))
 
 (defun memex-herdr--directory (row)
   "Return the directory a resume of ROW begins in.
@@ -226,9 +202,8 @@ Missing transcripts or resume commands open the indexed session."
              (command (alist-get 'resume_cmd row)))
         (cond
          ((null row)
-          (user-error
-           "Memex found no session %s at %s in the last %d sessions; raise memex-resume-lookup-limit"
-           session-id source-path memex-resume-lookup-limit))
+          (user-error "Memex has indexed no session %s at %s"
+                      session-id source-path))
          ((or (null command) (string-empty-p command))
           (message "memex resume: no %s resume command for this session, showing the transcript"
                    source)
@@ -277,25 +252,22 @@ ROWS are newest first, as `memex sessions' answers."
   "Return the session memex indexed for herdr's REFERENCE, or nil.
 herdr names a session by id or by transcript path and the viewer needs
 both, so the index is what pairs the one herdr reports with the other.
-DIRECTORY narrows the window to the sessions of the directory the agent
-works in; a session recorded elsewhere is looked for once more across
-the whole window.  A session branched since herdr last heard from the
-agent is the one the agent is writing, so the newest branch is taken."
+A session branched since herdr last heard from the agent is the one the
+agent is writing, so the newest branch among the latest sessions of
+DIRECTORY, else of the session's own directory, is taken."
   (when-let* ((value (alist-get 'value reference))
               (field (pcase (alist-get 'kind reference)
                        ("id" 'session_id)
-                       ("path" 'source_path))))
-    (let ((match (lambda (rows)
-                   (when-let* ((row (seq-find
-                                     (lambda (row)
-                                       (equal (alist-get field row) value))
-                                     rows)))
-                     (memex-herdr--newest-branch row rows)))))
-      (memex-herdr--indexed
-       (lambda ()
-         (or (and directory
-                  (funcall match (memex-herdr--sessions "--cwd" directory)))
-             (funcall match (memex-herdr--sessions))))))))
+                       ("path" 'source_path)))
+              (row (seq-find (lambda (row) (equal (alist-get field row) value))
+                             (memex-herdr--sessions
+                              (if (eq field 'session_id) "--session-id" "--source-path")
+                              value))))
+    (memex-herdr--newest-branch
+     row
+     (when-let* ((directory (or directory (alist-get 'cwd row))))
+       (memex-herdr--sessions "--cwd" directory
+                              "--limit" memex-herdr--branch-window)))))
 
 ;;;###autoload
 (defun memex-herdr-session-scope (reference &optional directory)
@@ -317,19 +289,29 @@ AGENT is a row of the agents herdr reports.  The transcript is the whole
 conversation, including what the terminal has scrolled past, and reading
 it leaves the agent alone.
 
-A session herdr has not reported yet, or that memex has not indexed yet,
-is refused by name rather than opened empty."
+A session memex has not indexed yet is indexed in the background and
+opened once it is; one herdr has not reported, or indexing does not
+find, is refused by name rather than opened empty."
   (let ((reference (alist-get 'agent_session agent)))
     (unless reference
       (user-error "Herdr reports no session for %s"
                   (or (alist-get 'name agent) (alist-get 'agent agent)
                       "this agent")))
     (memex-herdr--ready)
-    (let ((row (memex-herdr--ref-row reference (alist-get 'cwd agent))))
-      (unless row
-        (user-error "Memex has indexed no session %s" (alist-get 'value reference)))
-      (memex-herdr-open-session (alist-get 'session_id row)
-                                (alist-get 'source_path row)))))
+    (let ((open (lambda ()
+                  (when-let* ((row (memex-herdr--ref-row
+                                    reference (alist-get 'cwd agent))))
+                    (memex-herdr-open-session (alist-get 'session_id row)
+                                              (alist-get 'source_path row))
+                    t)))
+          (missing (format "Memex has indexed no session %s"
+                           (alist-get 'value reference))))
+      (unless (funcall open)
+        (message "memex: indexing...")
+        (memex-api-index
+         (lambda (_result)
+           (unless (funcall open) (message "%s" missing)))
+         :errback (lambda (_failure) (message "%s" missing)))))))
 
 (defun memex-herdr--running-agents ()
   "Return the agents herdr reports, refusing without herdr itself."
