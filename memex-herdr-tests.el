@@ -598,6 +598,20 @@ as many answers as it is about."
       (memex-herdr--sessions)
       (should (equal destination '(t nil))))))
 
+(ert-deftest memex-herdr-open-agent-session-follows-the-session-to-its-newest-branch ()
+  "herdr keeps reporting a session after the agent branches it."
+  (memex-herdr-tests--attached
+      (memex-herdr-tests--agent
+       (memex-herdr-tests--reference "id" "parent"))
+      (list (memex-herdr-tests--rows
+             "{\"session_id\":\"grandchild\",\"source_path\":\"/tmp/g.jsonl\",\"forked_from\":\"child\"}"
+             "{\"session_id\":\"sibling\",\"source_path\":\"/tmp/s.jsonl\",\"forked_from\":\"other\"}"
+             "{\"session_id\":\"child\",\"source_path\":\"/tmp/c.jsonl\",\"forked_from\":\"parent\"}"
+             "{\"session_id\":\"parent\",\"source_path\":\"/tmp/p.jsonl\"}"))
+    (memex-herdr-open-agent-session)
+    (should (equal (seq-take (cdr (car (memex-herdr-tests--of 'view))) 2)
+                   (list "grandchild" "/tmp/g.jsonl")))))
+
 (ert-deftest memex-herdr-open-agent-session-indexes-a-session-the-window-lacks ()
   "A session memex has not scanned yet is indexed once and looked up again."
   (let ((indexed 0))

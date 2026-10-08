@@ -258,20 +258,39 @@ the server and terminal herdr stamped on BUFFER when it attached it."
                        target))
               (memex-herdr--running-agents))))
 
+(defun memex-herdr--newest-branch (row rows)
+  "Return the newest of ROWS branched from ROW at any depth, else ROW.
+ROWS are newest first, as `memex sessions' answers."
+  (let ((seen (list (alist-get 'session_id row))))
+    (while-let ((branch (seq-find
+                         (lambda (candidate)
+                           (and (equal (alist-get 'forked_from candidate)
+                                       (alist-get 'session_id row))
+                                (not (member (alist-get 'session_id candidate)
+                                             seen))))
+                         rows)))
+      (push (alist-get 'session_id branch) seen)
+      (setq row branch))
+    row))
+
 (defun memex-herdr--ref-row (reference directory)
   "Return the session memex indexed for herdr's REFERENCE, or nil.
 herdr names a session by id or by transcript path and the viewer needs
 both, so the index is what pairs the one herdr reports with the other.
 DIRECTORY narrows the window to the sessions of the directory the agent
 works in; a session recorded elsewhere is looked for once more across
-the whole window."
+the whole window.  A session branched since herdr last heard from the
+agent is the one the agent is writing, so the newest branch is taken."
   (when-let* ((value (alist-get 'value reference))
               (field (pcase (alist-get 'kind reference)
                        ("id" 'session_id)
                        ("path" 'source_path))))
     (let ((match (lambda (rows)
-                   (seq-find (lambda (row) (equal (alist-get field row) value))
-                             rows))))
+                   (when-let* ((row (seq-find
+                                     (lambda (row)
+                                       (equal (alist-get field row) value))
+                                     rows)))
+                     (memex-herdr--newest-branch row rows)))))
       (memex-herdr--indexed
        (lambda ()
          (or (and directory
@@ -490,6 +509,7 @@ has had its say does not undo it."
       (when (memex-herdr--free-key-p herdr-status-mode-map (car binding))
         (keymap-set herdr-status-mode-map (car binding) (cdr binding))))))
 
+;;;###autoload
 (defun memex-herdr-install-dashboard ()
   "Offer memex's searches from herdr's dashboard, where herdr is installed.
 The dashboard knows nothing of memex; what it offers is a keymap and a
