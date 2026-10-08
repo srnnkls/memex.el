@@ -311,13 +311,53 @@ which is one element of the scope `memex-search-in-sessions' takes."
           :source-path (alist-get 'source_path row))))
 
 ;;;###autoload
+(declare-function herdr-subscribe "herdr-core" (types callback))
+(defvar herdr-socket-path)
+
+(defvar-local memex-herdr--watch nil
+  "The herdr subscription refreshing this transcript, as (PANE . PROCESS).")
+(put 'memex-herdr--watch 'permanent-local t)
+
+(defun memex-herdr--unwatch ()
+  "End the herdr subscription refreshing this transcript."
+  (when-let* ((process (cdr memex-herdr--watch)))
+    (delete-process process))
+  (setq memex-herdr--watch nil))
+(put 'memex-herdr--unwatch 'permanent-local-hook t)
+
+(defun memex-herdr--on-status (buffer data)
+  "Refresh BUFFER when DATA reports its agent stopped working.
+A transcript out of sight is refreshed when it is next shown."
+  (when (and (buffer-live-p buffer)
+             (not (member (alist-get 'agent_status data) '("working" nil)))
+             (get-buffer-window buffer t))
+    (memex-view-refresh buffer)))
+
+(defun memex-herdr--watch (buffer agent)
+  "Refresh BUFFER whenever AGENT, a row of herdr's agents, finishes a turn."
+  (when-let* (((fboundp 'herdr-subscribe))
+              (pane (alist-get 'pane_id agent))
+              (server (alist-get 'server_key agent)))
+    (with-current-buffer buffer
+      (unless (and (equal (car memex-herdr--watch) (cons server pane))
+                   (process-live-p (cdr memex-herdr--watch)))
+        (memex-herdr--unwatch)
+        (setq memex-herdr--watch
+              (cons (cons server pane)
+                    (let ((herdr-socket-path server))
+                      (herdr-subscribe
+                       `(((type . "pane.agent_status_changed") (pane_id . ,pane)))
+                       (lambda (data) (memex-herdr--on-status buffer data))))))
+        (add-hook 'kill-buffer-hook #'memex-herdr--unwatch nil t)))))
+
 (defun memex-herdr-open-agent (agent)
   "Show memex's transcript of the session AGENT is running.
 AGENT is a row of the agents herdr reports.  The transcript is the whole
 conversation, including what the terminal has scrolled past, and reading
 it leaves the agent alone.
 
-A session herdr has not reported yet, or that memex has not indexed yet,
+The transcript is refreshed each time the agent finishes a turn.  A
+session herdr has not reported yet, or that memex has not indexed yet,
 is refused by name rather than opened empty."
   (let ((reference (alist-get 'agent_session agent)))
     (unless reference
@@ -328,8 +368,12 @@ is refused by name rather than opened empty."
     (let ((row (memex-herdr--ref-row reference (alist-get 'cwd agent))))
       (unless row
         (user-error "Memex has indexed no session %s" (alist-get 'value reference)))
-      (memex-herdr-open-session (alist-get 'session_id row)
-                                (alist-get 'source_path row)))))
+      (memex-view-session (alist-get 'session_id row)
+                          (alist-get 'source_path row)
+                          nil
+                          (lambda (buffer)
+                            (memex-herdr--display buffer)
+                            (memex-herdr--watch buffer agent))))))
 
 (defun memex-herdr--running-agents ()
   "Return the agents herdr reports, refusing without herdr itself."

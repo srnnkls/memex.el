@@ -612,6 +612,51 @@ as many answers as it is about."
     (should (equal (seq-take (cdr (car (memex-herdr-tests--of 'view))) 2)
                    (list "grandchild" "/tmp/g.jsonl")))))
 
+(ert-deftest memex-herdr-open-agent-session-refreshes-when-the-agent-finishes-a-turn ()
+  "The transcript follows the agent's status on the pane it was opened from."
+  (let ((subscribed nil)
+        (refreshed nil)
+        (process (make-process :name "memex-herdr-tests-watch"
+                               :command '("sleep" "30") :noquery t))
+        (transcript (generate-new-buffer " *memex herdr tests transcript*")))
+    (unwind-protect
+        (cl-letf (((symbol-function 'herdr-subscribe)
+                   (lambda (types callback)
+                     (push (list types callback herdr-socket-path) subscribed)
+                     process))
+                  ((symbol-function 'memex-view-refresh)
+                   (lambda (shown) (push shown refreshed)))
+                  ((symbol-function 'memex-herdr--display) #'ignore))
+          (memex-herdr-tests--attached
+              (memex-herdr-tests--agent
+               (memex-herdr-tests--reference "id" memex-herdr-tests--session-id))
+              (list (memex-herdr-tests--rows
+                     (memex-herdr-tests--row memex-herdr-tests--session-id
+                                             "/tmp/memex-herdr-tests/a.jsonl"
+                                             memex-herdr-tests--agent-cwd nil nil)))
+            (memex-herdr-open-agent-session)
+            (let ((display (nth 4 (car (memex-herdr-tests--of 'view)))))
+              (funcall display transcript)
+              (funcall display transcript)))
+          (should (= (length subscribed) 1))
+          (pcase-let ((`(,types ,callback ,server) (car subscribed)))
+            (should (equal types '(((type . "pane.agent_status_changed")
+                                    (pane_id . "pane-7")))))
+            (should (equal server "/srv/b"))
+            (save-window-excursion
+              (switch-to-buffer transcript)
+              (funcall callback '((pane_id . "pane-7") (agent_status . "working")))
+              (should-not refreshed)
+              (funcall callback '((pane_id . "pane-7") (agent_status . "done")))
+              (should (equal refreshed (list transcript))))
+            (setq refreshed nil)
+            (funcall callback '((pane_id . "pane-7") (agent_status . "idle")))
+            (should-not refreshed))
+          (kill-buffer transcript)
+          (should-not (process-live-p process)))
+      (when (buffer-live-p transcript) (kill-buffer transcript))
+      (when (process-live-p process) (delete-process process)))))
+
 (ert-deftest memex-herdr-open-agent-session-indexes-a-session-the-window-lacks ()
   "A session memex has not scanned yet is indexed once and looked up again."
   (let ((indexed 0))
