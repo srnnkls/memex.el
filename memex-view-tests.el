@@ -1581,12 +1581,86 @@ when this returns."
   (let ((context (memex-view-tests--context records)))
     (cl-letf (((symbol-function 'memex-api-index)
                (lambda (callback &rest _) (funcall callback nil) nil))
+              ((symbol-function 'memex-api-session-page)
+               (lambda (_id _path callback &rest keys)
+                 (let ((offset (plist-get keys :offset)))
+                   (push (list 'page offset) memex-view-tests--requests)
+                   (funcall callback
+                            `((records . ,(nthcdr offset records))
+                              (total . ,(length records))
+                              (next_offset . nil))))
+                 nil))
               ((symbol-function 'memex-api-session)
                (lambda (id path callback &rest _)
                  (push (cons id path) memex-view-tests--requests)
                  (funcall callback context)
                  nil)))
       (memex-view-refresh buffer))))
+
+(ert-deftest memex-view-refresh-appends-what-the-session-added ()
+  "A refresh asks for the records after those drawn, not the whole session."
+  (skip-unless (featurep 'magit-section))
+  (unwind-protect
+      (let ((buffer (memex-view-tests--open (memex-view-tests--records)
+                                            memex-view-tests--session-id
+                                            memex-view-tests--source-path)))
+        (setq memex-view-tests--requests nil)
+        (with-current-buffer buffer
+          (memex-view-tests--refresh buffer (memex-view-tests--grown-records))
+          (should (equal memex-view-tests--requests '((page 4))))
+          (should (memex-view-tests--position-of "epsilon reply"))
+          (should (= memex-view--count 5))
+          (should (= (length (oref magit-root-section children)) 5))
+          (should (= (marker-position (oref magit-root-section end)) (point-max)))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-refresh-joins-a-result-to-the-call-already-drawn ()
+  "A tool's result arriving after its call is drawn in the call's entry."
+  (skip-unless (featurep 'magit-section))
+  (unwind-protect
+      (let* ((call (memex-view-tests--record
+                    :doc-id 8810 :ts 1787671118000 :source "codex"
+                    :project "memex.el" :session-id memex-view-tests--session-id
+                    :turn-id 7410 :role "tool_use" :tool-name "Bash"
+                    :tool-input "ls zeta-input"
+                    :source-path memex-view-tests--source-path))
+             (result (memex-view-tests--record
+                      :doc-id 8811 :ts 1787671118500 :source "codex"
+                      :project "memex.el" :session-id memex-view-tests--session-id
+                      :turn-id 7411 :role "tool_result" :tool-name "Bash"
+                      :text "zeta-output" :tool-output "zeta-output"
+                      :parent-tool-use-id "toolu_zeta"
+                      :source-path memex-view-tests--source-path))
+             (call (cons '(event_id . "toolu_zeta") call))
+             (before (append (memex-view-tests--records) (list call)))
+             (buffer (memex-view-tests--open before
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path)))
+        (with-current-buffer buffer
+          (should (= (length (oref magit-root-section children)) 5))
+          (memex-view-tests--refresh buffer (append before (list result)))
+          (should (= (length (oref magit-root-section children)) 5))
+          (let ((last (oref (car (last (oref magit-root-section children))) value)))
+            (should (equal (alist-get 'doc_id (memex-entry-call last)) 8810))
+            (should (equal (alist-get 'doc_id (memex-entry-result last)) 8811)))
+          (should (= memex-view--count 6))))
+    (memex-view-tests--cleanup)))
+
+(ert-deftest memex-view-refresh-redraws-a-session-that-shrank ()
+  "A session holding fewer records than drawn is fetched and drawn whole."
+  (skip-unless (featurep 'magit-section))
+  (unwind-protect
+      (let ((buffer (memex-view-tests--open (memex-view-tests--records)
+                                            memex-view-tests--session-id
+                                            memex-view-tests--source-path)))
+        (setq memex-view-tests--requests nil)
+        (with-current-buffer buffer
+          (memex-view-tests--refresh buffer (seq-take (memex-view-tests--records) 2))
+          (should (member (cons memex-view-tests--session-id
+                                memex-view-tests--source-path)
+                          memex-view-tests--requests))
+          (should (= memex-view--count 2))))
+    (memex-view-tests--cleanup)))
 
 (ert-deftest memex-view-opens-on-the-last-message-not-the-tool-traffic-after-it ()
   "A session mid-turn ends in tool calls; the view opens on what was last said."

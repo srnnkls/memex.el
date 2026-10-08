@@ -188,6 +188,9 @@ what it starts as and what `memex-view-filter' changes.")
   "The entries not yet drawn, newest first.
 Their prose is rendered as each chunk is drawn, not ahead of it.")
 
+(defvar-local memex-view--count 0
+  "How many records of the session this buffer has drawn or queued.")
+
 (defvar-local memex-view--fill-timer nil
   "The timer drawing what is left of this buffer's transcript.")
 
@@ -1518,6 +1521,7 @@ one session shares it."
       (setq-local memex-view-source-path source-path)
       (setq-local memex-view-source (alist-get 'source (car records)))
       (setq-local memex-view--problems 0)
+      (setq-local memex-view--count (length records))
       (let* ((entries (memex-entry-pair records))
              (memex-entry--fields-cache (make-hash-table :test #'eq))
              (older (max 0 (- (length entries) (max 1 memex-view-chunk-size))))
@@ -1643,6 +1647,79 @@ DRAWN they are never drawn, and a record outside them names nothing."
              (max start (1- (oref section end))))))
      ((not drawn) (funcall end)))))
 
+(defun memex-view--answered (entries records)
+  "Return the first of ENTRIES whose open call one of RECORDS answers."
+  (let ((answered (delq nil (mapcar (lambda (record)
+                                      (alist-get 'parent_tool_use_id record))
+                                    records))))
+    (seq-find (lambda (entry)
+                (and (null (memex-entry-result entry))
+                     (member (alist-get 'event_id (memex-entry-call entry))
+                             answered)))
+              entries)))
+
+(defun memex-view--append (buffer records)
+  "Draw RECORDS, the session's newest, at the end of BUFFER.
+Entries from the first call RECORDS answer onward are drawn again, so a
+result joins its call.  Answers nil, drawing nothing, where that call is
+still among the chunks queued for drawing."
+  (with-current-buffer buffer
+    (unless (memex-view--answered memex-view--pending records)
+      (let* ((inhibit-read-only t)
+             (root magit-root-section)
+             (children (oref root children))
+             (first (memex-view--answered
+                     (mapcar (lambda (section) (oref section value)) children)
+                     records))
+             (kept (if first
+                       (seq-take-while (lambda (section)
+                                         (not (eq (oref section value) first)))
+                                       children)
+                     children))
+             (redrawn (nthcdr (length kept) children))
+             (from (if redrawn (marker-position (oref (car redrawn) start)) (point-max)))
+             (entries (memex-entry-pair
+                       (append (mapcan (lambda (section)
+                                         (let ((entry (oref section value)))
+                                           (delq nil (list (memex-entry-call entry)
+                                                           (memex-entry-result entry)))))
+                                       redrawn)
+                               records)))
+             (point (memex-view--anchor (point) t))
+             (windows (mapcar (lambda (window)
+                                (list window
+                                      (memex-view--anchor (window-start window))
+                                      (memex-view--anchor (window-point window) t)))
+                              (get-buffer-window-list buffer nil t)))
+             (memex-entry--fields-cache (make-hash-table :test #'eq))
+             (magit-insert-section--parent root)
+             (magit-insert-section--current root)
+             (magit-insert-section--oldroot nil))
+        (dolist (section redrawn)
+          (when (eq (car (memex-entry-status (oref section value))) 'warn)
+            (setq memex-view--problems (1- memex-view--problems))))
+        (delete-region from (point-max))
+        (oset root children nil)
+        (goto-char (point-max))
+        (seq-mapn #'memex-view--insert-record
+                  entries
+                  (memex-view--texts (mapcar #'memex-entry-call entries)))
+        (memex-view--fold (oref root children))
+        (oset root children (append kept (oref root children)))
+        (set-marker (oref root end) (point-max))
+        (setq-local memex-view--count (+ memex-view--count (length records)))
+        (set-buffer-modified-p nil)
+        (goto-char (memex-view--anchor-position point t))
+        (pcase-dolist (`(,window ,start ,point) windows)
+          (when (window-live-p window)
+            (if (eq point :end)
+                (memex-view--hold-end window)
+              (when-let* ((position (memex-view--anchor-position start t)))
+                (set-window-start window position t)))
+            (set-window-point window (memex-view--anchor-position point t))))
+        (force-mode-line-update)
+        t))))
+
 (defun memex-view--redraw (buffer context session-id source-path)
   "Draw CONTEXT over BUFFER as the session SESSION-ID at SOURCE-PATH.
 What the reader set stays set: how much of each kind of entry shows,
@@ -1702,13 +1779,47 @@ Returns the request process, or nil where BUFFER renders no session."
             (lambda (_result)
               (funcall
                settle
-               (memex-api-session
-                session-id source-path
-                (lambda (context)
-                  (memex-view--redraw buffer context session-id source-path)
-                  (funcall settle))
-                :errback failed)))
+               (memex-view--fetch-new
+                buffer session-id source-path nil
+                (lambda (records)
+                  (if (and records (memex-view--append buffer records))
+                      (funcall settle)
+                    (funcall
+                     settle
+                     (memex-api-session
+                      session-id source-path
+                      (lambda (context)
+                        (memex-view--redraw buffer context session-id source-path)
+                        (funcall settle))
+                      :errback failed))))
+                (lambda () (funcall settle))
+                failed)))
             :errback failed)))))))
+
+(defun memex-view--fetch-new (buffer session-id source-path records
+                                     redraw unchanged failed)
+  "Fetch the records of SESSION-ID at SOURCE-PATH that BUFFER has not drawn.
+RECORDS are those fetched so far.  REDRAW is called with them all once
+the last page is in, or with nil where the session no longer extends
+what BUFFER drew; UNCHANGED where nothing was added; FAILED with an
+error.  Returns the request process."
+  (let ((offset (+ (buffer-local-value 'memex-view--count buffer) (length records))))
+    (memex-api-session-page
+     session-id source-path
+     (lambda (page)
+       (when (buffer-live-p buffer)
+         (let ((records (append records (alist-get 'records page)))
+               (count (buffer-local-value 'memex-view--count buffer)))
+           (cond
+            ((< (or (alist-get 'total page) 0) count) (funcall redraw nil))
+            ((alist-get 'next_offset page)
+             (with-current-buffer buffer
+               (setq-local memex-view--refresh
+                           (memex-view--fetch-new buffer session-id source-path
+                                                  records redraw unchanged failed))))
+            ((null records) (funcall unchanged))
+            (t (funcall redraw records))))))
+     :errback failed :offset offset)))
 
 (provide 'memex-view)
 ;;; memex-view.el ends here
