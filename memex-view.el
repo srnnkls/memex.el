@@ -1317,6 +1317,23 @@ it stays, showing again what it was opened for."
         (set-window-buffer window opened-for))
       (kill-buffer buffer))))
 
+(defun memex-view--refresh-shown (window)
+  "Refresh the transcript WINDOW shows once it is the selected window.
+A refresh still out is left to finish rather than started over."
+  (when (and (eq window (selected-window))
+             (eq (buffer-local-value 'major-mode (window-buffer window))
+                 'memex-session-mode))
+    (with-current-buffer (window-buffer window)
+      (unless (process-live-p memex-view--refresh)
+        (memex-view-refresh)))))
+
+(defun memex-view--refresh-focused ()
+  "Refresh the transcript in the selected window of a frame gaining focus."
+  (when (frame-focus-state)
+    (memex-view--refresh-shown (selected-window))))
+
+(add-function :after after-focus-change-function #'memex-view--refresh-focused)
+
 (define-derived-mode memex-session-mode magit-section-mode "Memex Session"
   "Major mode for a memex session transcript.
 
@@ -1324,6 +1341,8 @@ it stays, showing again what it was opened for."
   (setq-local header-line-format '(:eval (memex-view--header-line)))
   (setq-local imenu-create-index-function #'memex-view--imenu-index)
   (setq-local revert-buffer-function (lambda (&rest _) (memex-view-refresh)))
+  (add-hook 'window-buffer-change-functions #'memex-view--refresh-shown nil t)
+  (add-hook 'window-selection-change-functions #'memex-view--refresh-shown nil t)
   (setq-local memex-view-states (copy-alist memex-view-initial-states))
   (setq-local memex-view-details (default-value 'memex-view-details))
   (memex-view--filter-spec)

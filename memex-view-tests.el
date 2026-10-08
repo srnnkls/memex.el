@@ -372,6 +372,36 @@ finds it."
           (should (memex-view-tests--position-of "second line of beta"))))
     (memex-view-tests--cleanup)))
 
+(ert-deftest memex-view-refreshes-a-transcript-coming-into-the-foreground ()
+  "Selecting a transcript's window refreshes it; one refresh at a time."
+  (unwind-protect
+      (let* ((refreshed 0)
+             (buffer (memex-view-tests--open (memex-view-tests--records)
+                                             memex-view-tests--session-id
+                                             memex-view-tests--source-path))
+             (live nil))
+        (cl-letf (((symbol-function 'memex-view-refresh)
+                   (lambda (&rest _) (setq refreshed (1+ refreshed))))
+                  ((symbol-function 'process-live-p) (lambda (_) live)))
+          (with-current-buffer buffer
+            (should (memq #'memex-view--refresh-shown
+                          window-selection-change-functions))
+            (should (memq #'memex-view--refresh-shown
+                          window-buffer-change-functions)))
+          (save-window-excursion
+            (switch-to-buffer buffer)
+            (memex-view--refresh-shown (selected-window))
+            (should (= refreshed 1))
+            (setq live t)
+            (memex-view--refresh-shown (selected-window))
+            (should (= refreshed 1))
+            (setq live nil)
+            (with-temp-buffer
+              (switch-to-buffer (current-buffer))
+              (memex-view--refresh-shown (selected-window))
+              (should (= refreshed 1))))))
+    (memex-view-tests--cleanup)))
+
 (ert-deftest memex-view-draws-the-tail-of-a-session-before-the-rest ()
   (unwind-protect
       (let* ((memex-view-chunk-size 2)
