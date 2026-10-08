@@ -64,12 +64,16 @@
                    ((symbol-function 'herdr-api-pane-read)
                     (lambda (&rest _) '((type . "pane_read"))))
                    ((symbol-function 'memex-herdr-session-scope)
-                    (lambda (reference _directory)
-                      (list :source "claude"
-                            :session-id (alist-get 'value reference)
-                            :source-path (concat "/tmp/"
-                                                 (alist-get 'value reference)
-                                                 ".jsonl"))))
+                    (lambda (reference _directory callback)
+                      (funcall callback
+                               (list :source "claude"
+                                     :session-id (alist-get 'value reference)
+                                     :source-path (concat "/tmp/"
+                                                          (alist-get 'value reference)
+                                                          ".jsonl")))))
+                   ((symbol-function 'run-at-time)
+                    (lambda (_time _repeat function &rest arguments)
+                      (apply function arguments)))
                    ((symbol-function 'memex-search-in-sessions)
                     (lambda (scope &optional _mode _initial)
                       (push scope memex-herdr-dashboard-tests--searches)
@@ -153,10 +157,17 @@
 
 (ert-deftest herdr-memex-refuses-an-agent-memex-has-not-indexed ()
   (memex-herdr-dashboard-tests--with-dashboard
-    (cl-letf (((symbol-function 'memex-herdr-session-scope) (lambda (&rest _) nil)))
-      (memex-herdr-dashboard-tests--goto "two")
-      (should-error (memex-herdr-search) :type 'user-error)
-      (should-not memex-herdr-dashboard-tests--searches))))
+    (let ((reported nil))
+      (cl-letf (((symbol-function 'memex-herdr-session-scope)
+                 (lambda (_reference _directory callback) (funcall callback nil)))
+                ((symbol-function 'message)
+                 (lambda (format-string &rest arguments)
+                   (push (apply #'format format-string arguments) reported))))
+        (memex-herdr-dashboard-tests--goto "two")
+        (memex-herdr-search)
+        (should (seq-find (lambda (text) (string-match-p "indexed no session" text))
+                          reported))
+        (should-not memex-herdr-dashboard-tests--searches)))))
 
 )
 

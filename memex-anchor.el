@@ -20,7 +20,7 @@
 (require 'memex-view)
 
 (declare-function memex-herdr-resume "memex-herdr" (record))
-(declare-function memex-herdr--row "memex-herdr" (session-id source-path source))
+(declare-function memex-herdr--row "memex-herdr" (session-id source-path callback))
 (declare-function memex-herdr--directory "memex-herdr" (row))
 (declare-function memex-herdr--start "memex-herdr" (row command &optional name))
 
@@ -199,17 +199,21 @@ rather than attached twice."
           (set-window-point window (point)))
         t))))
 
-(defun memex-anchor--resume-command (record)
-  "Return (COMMAND . ROW) for RECORD, retaining ROW without a command."
-  (when (fboundp 'memex-herdr--row)
-    (when-let* ((row (memex-herdr--row (alist-get 'session_id record)
-                                       (alist-get 'source_path record)
-                                       (alist-get 'source record))))
-      (let ((command (alist-get 'resume_cmd row)))
-        (cons (and (stringp command)
-                   (not (string-empty-p command))
-                   command)
-              row)))))
+(defun memex-anchor--resume-command (record callback)
+  "Call CALLBACK with (COMMAND . ROW) for RECORD, or nil memex knows none.
+ROW is retained even without a command."
+  (if (fboundp 'memex-herdr--row)
+      (memex-herdr--row
+       (alist-get 'session_id record) (alist-get 'source_path record)
+       (lambda (row)
+         (funcall callback
+                  (when row
+                    (let ((command (alist-get 'resume_cmd row)))
+                      (cons (and (stringp command)
+                                 (not (string-empty-p command))
+                                 command)
+                            row))))))
+    (funcall callback nil)))
 
 (defun memex-anchor--start (record command row)
   "Resume RECORD's session with COMMAND in a herdr pane for ROW."
@@ -323,8 +327,10 @@ terminal."
     (let ((pane-id (memex-anchor--by-session record)))
       (if pane-id
           (memex-anchor--enter record pane-id)
-        (memex-anchor--finish-resolution
-         record nil (memex-anchor--resume-command record))))))
+        (memex-anchor--resume-command
+         record
+         (lambda (resume)
+           (memex-anchor--finish-resolution record nil resume)))))))
 
 ;;;###autoload
 (defun memex-anchor-show (record)

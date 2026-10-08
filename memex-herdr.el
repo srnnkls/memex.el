@@ -15,10 +15,9 @@
 ;; no resume command for, and one whose transcript is gone from disk, are
 ;; shown in the read-only viewer instead.
 ;;
-;; The resume command is not part of the RPC surface, so it is read from
-;; `memex sessions --json-array', filtered to the `session_id' at the
-;; `source_path' asked for - a `session_id' names a session only along
-;; with the transcript it was read from.
+;; Sessions are looked up over memex's RPC, filtered to the `session_id'
+;; at the `source_path' asked for - a `session_id' names a session only
+;; along with the transcript it was read from.
 ;;
 ;; `memex-herdr-open-agent-session' goes the other way: from the terminal
 ;; of an agent herdr attached, to the indexed transcript of the session it
@@ -59,7 +58,7 @@
 (declare-function herdr-agent--workspace-entries "herdr-agent" (entries))
 (declare-function transient-get-suffix "transient" (prefix loc))
 
-(defconst memex-herdr--branch-window "50"
+(defconst memex-herdr--branch-window 50
   "How many of a directory's newest sessions are searched for a branch.")
 
 (defcustom memex-herdr-display-action nil
@@ -111,27 +110,25 @@ here rather than at the head of a resume."
     (herdr-error (user-error "Cannot ready herdr: %s"
                              (error-message-string failure)))))
 
-(defun memex-herdr--sessions (&rest filters)
-  "Return the sessions FILTERS select, newest first.
-FILTERS are the arguments that follow `sessions --json-array'.  A
-shell-out that cannot run at all answers with no rows, which every
-caller reports as the session it could not find."
-  (condition-case nil
-      (with-temp-buffer
-        (let ((default-directory temporary-file-directory))
-          (when (eq 0 (apply #'call-process
-                             memex-executable nil '(t nil) nil
-                             "sessions" "--json-array" filters))
-            (memex--decode (buffer-string)))))
-    (error nil)))
+(defun memex-herdr--sessions (callback &rest keys)
+  "Call CALLBACK with the sessions KEYS select, newest first.
+KEYS are `memex-api-sessions' keywords.  A request that fails answers
+with no rows, which every caller reports as the session it could not
+find."
+  (apply #'memex-api-sessions callback
+         :errback (lambda (_failure) (funcall callback nil))
+         keys))
 
-(defun memex-herdr--row (session-id source-path _source)
-  "Return what memex knows of the session SESSION-ID at SOURCE-PATH."
-  (seq-find (lambda (row)
-              (and (equal (alist-get 'session_id row) session-id)
-                   (equal (alist-get 'source_path row) source-path)))
-            (memex-herdr--sessions "--session-id" session-id
-                                   "--source-path" source-path)))
+(defun memex-herdr--row (session-id source-path callback)
+  "Call CALLBACK with what memex knows of SESSION-ID at SOURCE-PATH, or nil."
+  (memex-herdr--sessions
+   (lambda (rows)
+     (funcall callback
+              (seq-find (lambda (row)
+                          (and (equal (alist-get 'session_id row) session-id)
+                               (equal (alist-get 'source_path row) source-path)))
+                        rows)))
+   :session-id session-id :source-path source-path :limit 2))
 
 (defun memex-herdr--directory (row)
   "Return the directory a resume of ROW begins in.
@@ -198,22 +195,26 @@ Missing transcripts or resume commands open the indexed session."
           (message "memex resume: nothing is left at %s, showing what memex indexed"
                    source-path)
           (memex-herdr-open-session session-id source-path doc-id))
-      (let* ((row (memex-herdr--row session-id source-path source))
-             (command (alist-get 'resume_cmd row)))
-        (cond
-         ((null row)
-          (user-error "Memex has indexed no session %s at %s"
-                      session-id source-path))
-         ((or (null command) (string-empty-p command))
-          (message "memex resume: no %s resume command for this session, showing the transcript"
-                   source)
-          (memex-herdr-open-session session-id source-path doc-id))
-         ((not (require 'memex-anchor nil t))
-          (user-error "Memex anchor support is unavailable"))
-         (t
-          (unless (memex-anchor--herdr-p)
-            (memex-herdr--ready-server))
-          (memex-anchor-resume record (cons command row))))))))
+      (memex-herdr--row
+       session-id source-path
+       (lambda (row)
+         (let ((command (alist-get 'resume_cmd row)))
+           (condition-case failure
+               (cond
+                ((null row)
+                 (user-error "Memex has indexed no session %s at %s"
+                             session-id source-path))
+                ((or (null command) (string-empty-p command))
+                 (message "memex resume: no %s resume command for this session, showing the transcript"
+                          source)
+                 (memex-herdr-open-session session-id source-path doc-id))
+                ((not (require 'memex-anchor nil t))
+                 (user-error "Memex anchor support is unavailable"))
+                (t
+                 (unless (memex-anchor--herdr-p)
+                   (memex-herdr--ready-server))
+                 (memex-anchor-resume record (cons command row))))
+             (user-error (message "%s" (error-message-string failure))))))))))
 
 ;;;; Reading the session an attached agent is running
 
@@ -248,39 +249,48 @@ ROWS are newest first, as `memex sessions' answers."
       (setq row branch))
     row))
 
-(defun memex-herdr--ref-row (reference directory)
-  "Return the session memex indexed for herdr's REFERENCE, or nil.
+(defun memex-herdr--ref-row (reference directory callback)
+  "Call CALLBACK with the session memex indexed for herdr's REFERENCE, or nil.
 herdr names a session by id or by transcript path and the viewer needs
 both, so the index is what pairs the one herdr reports with the other.
 A session branched since herdr last heard from the agent is the one the
 agent is writing, so the newest branch among the latest sessions of
 DIRECTORY, else of the session's own directory, is taken."
-  (when-let* ((value (alist-get 'value reference))
-              (field (pcase (alist-get 'kind reference)
-                       ("id" 'session_id)
-                       ("path" 'source_path)))
-              (row (seq-find (lambda (row) (equal (alist-get field row) value))
-                             (memex-herdr--sessions
-                              (if (eq field 'session_id) "--session-id" "--source-path")
-                              value))))
-    (memex-herdr--newest-branch
-     row
-     (when-let* ((directory (or directory (alist-get 'cwd row))))
-       (memex-herdr--sessions "--cwd" directory
-                              "--limit" memex-herdr--branch-window)))))
+  (let* ((value (alist-get 'value reference))
+         (field (pcase (alist-get 'kind reference)
+                  ("id" 'session_id)
+                  ("path" 'source_path))))
+    (if (not (and value field))
+        (funcall callback nil)
+      (memex-herdr--sessions
+       (lambda (rows)
+         (let* ((row (seq-find (lambda (row) (equal (alist-get field row) value))
+                               rows))
+                (directory (and row (or directory (alist-get 'cwd row)))))
+           (if directory
+               (memex-herdr--sessions
+                (lambda (candidates)
+                  (funcall callback (memex-herdr--newest-branch row candidates)))
+                :cwd directory :limit memex-herdr--branch-window)
+             (funcall callback row))))
+       (if (eq field 'session_id) :session-id :source-path) value
+       :limit 2))))
 
 ;;;###autoload
-(defun memex-herdr-session-scope (reference &optional directory)
-  "Return the memex session scope for herdr's agent session REFERENCE, or nil.
-REFERENCE is the `agent_session' record herdr reports for an agent.
-DIRECTORY is where that agent works and narrows the lookup window.
-
-The answer is a plist of `:source', `:session-id' and `:source-path',
-which is one element of the scope `memex-search-in-sessions' takes."
-  (when-let* ((row (memex-herdr--ref-row reference directory)))
-    (list :source (alist-get 'source row)
-          :session-id (alist-get 'session_id row)
-          :source-path (alist-get 'source_path row))))
+(defun memex-herdr-session-scope (reference directory callback)
+  "Call CALLBACK with the session scope for herdr's REFERENCE, or nil.
+REFERENCE is the `agent_session' record herdr reports for an agent and
+DIRECTORY is where that agent works.  The scope is a plist of `:source',
+`:session-id' and `:source-path', which is one element of the scope
+`memex-search-in-sessions' takes."
+  (memex-herdr--ref-row
+   reference directory
+   (lambda (row)
+     (funcall callback
+              (and row
+                   (list :source (alist-get 'source row)
+                         :session-id (alist-get 'session_id row)
+                         :source-path (alist-get 'source_path row)))))))
 
 ;;;###autoload
 (defun memex-herdr-open-agent (agent)
@@ -298,20 +308,25 @@ find, is refused by name rather than opened empty."
                   (or (alist-get 'name agent) (alist-get 'agent agent)
                       "this agent")))
     (memex-herdr--ready)
-    (let ((open (lambda ()
-                  (when-let* ((row (memex-herdr--ref-row
-                                    reference (alist-get 'cwd agent))))
-                    (memex-herdr-open-session (alist-get 'session_id row)
-                                              (alist-get 'source_path row))
-                    t)))
-          (missing (format "Memex has indexed no session %s"
-                           (alist-get 'value reference))))
-      (unless (funcall open)
-        (message "memex: indexing...")
-        (memex-api-index
-         (lambda (_result)
-           (unless (funcall open) (message "%s" missing)))
-         :errback (lambda (_failure) (message "%s" missing)))))))
+    (let* ((directory (alist-get 'cwd agent))
+           (missing (format "Memex has indexed no session %s"
+                            (alist-get 'value reference)))
+           (open (lambda (row)
+                   (memex-herdr-open-session (alist-get 'session_id row)
+                                             (alist-get 'source_path row)))))
+      (memex-herdr--ref-row
+       reference directory
+       (lambda (row)
+         (if row
+             (funcall open row)
+           (message "memex: indexing...")
+           (memex-api-index
+            (lambda (_result)
+              (memex-herdr--ref-row
+               reference directory
+               (lambda (row)
+                 (if row (funcall open row) (message "%s" missing)))))
+            :errback (lambda (_failure) (message "%s" missing)))))))))
 
 (defun memex-herdr--running-agents ()
   "Return the agents herdr reports, refusing without herdr itself."
@@ -390,33 +405,51 @@ is nothing to narrow by and the answer is nil."
       ('herdr-status-herd (herdr-herd-member-entries (oref section value)))
       (_ (herdr-status-visible-agents)))))
 
-(defun memex-herdr--scope (entries)
-  "Return the session scope covering ENTRIES.
+(defun memex-herdr--scope (entries callback)
+  "Call CALLBACK with the session scope covering ENTRIES, in their order.
 An entry herdr reports no session for, or memex has not indexed, drops out."
-  (delq nil
-        (mapcar (lambda (entry)
-                  (when-let* ((reference (alist-get 'agent_session entry)))
-                    (memex-herdr-session-scope reference (alist-get 'cwd entry))))
-                entries)))
+  (let* ((scopes (make-vector (length entries) nil))
+         (left (length entries))
+         (settle (lambda ()
+                   (when (zerop (setq left (1- left)))
+                     (funcall callback (delq nil (append scopes nil)))))))
+    (if (null entries)
+        (funcall callback nil)
+      (seq-do-indexed
+       (lambda (entry index)
+         (if-let* ((reference (alist-get 'agent_session entry)))
+             (memex-herdr-session-scope
+              reference (alist-get 'cwd entry)
+              (lambda (scope)
+                (aset scopes index scope)
+                (funcall settle)))
+           (funcall settle)))
+       entries))))
 
-(defun memex-herdr--scope-at-point ()
-  "Return the scope for the section at point, refusing an empty narrowing.
-Nil means a search across everything and is returned only where point
-asked for one.  Agents whose sessions memex has all missed are an error,
-not a widening."
+(defun memex-herdr--scope-at-point (callback)
+  "Call CALLBACK with the scope for the section at point.
+Nil means a search across everything and is answered only where point
+asked for one.  Agents whose sessions memex has all missed are reported,
+not widened to everything."
   (let ((entries (memex-herdr--agents-at-point)))
     (if (null entries)
-        nil
-      (or (memex-herdr--scope entries)
-          (user-error "Memex has indexed no session of %s"
-                      (if (cdr entries) "these agents" "this agent"))))))
+        (funcall callback nil)
+      (memex-herdr--scope
+       entries
+       (lambda (scope)
+         (if scope
+             (funcall callback scope)
+           (message "Memex has indexed no session of %s"
+                    (if (cdr entries) "these agents" "this agent"))))))))
 
 ;;;###autoload
 (defun memex-herdr-search (&optional mode)
   "Search memex over the sessions the dashboard section at point stands for.
 MODE is `lexical', `semantic' or `hybrid'."
   (interactive)
-  (memex-search-in-sessions (memex-herdr--scope-at-point) mode))
+  (memex-herdr--scope-at-point
+   (lambda (scope)
+     (run-at-time 0 nil #'memex-search-in-sessions scope mode))))
 
 ;;;###autoload
 (defun memex-herdr-search-globally (&optional mode)
@@ -425,31 +458,37 @@ MODE is `lexical', `semantic' or `hybrid'."
   (interactive)
   (memex-search-in-sessions nil mode))
 
-(defun memex-herdr--session-at-point ()
-  "Return the scope entry of the single agent at point."
+(defun memex-herdr--session-at-point (callback)
+  "Call CALLBACK with the scope entry of the single agent at point."
   (let ((entries (memex-herdr--agents-at-point)))
     (unless (and entries (null (cdr entries)))
       (user-error "Point is on no single agent"))
-    (or (car (memex-herdr--scope entries))
-        (user-error "Memex has indexed no session of this agent"))))
+    (memex-herdr--scope
+     entries
+     (lambda (scope)
+       (if scope
+           (funcall callback (car scope))
+         (message "Memex has indexed no session of this agent"))))))
 
 ;;;###autoload
 (defun memex-herdr-transcript-at-point ()
   "Show the transcript of the session the agent at point is running."
   (interactive)
-  (let ((scope (memex-herdr--session-at-point)))
-    (memex-herdr-open-session (plist-get scope :session-id)
-                              (plist-get scope :source-path))))
+  (memex-herdr--session-at-point
+   (lambda (scope)
+     (memex-herdr-open-session (plist-get scope :session-id)
+                               (plist-get scope :source-path)))))
 
 ;;;###autoload
 (defun memex-herdr-resume-at-point ()
   "Resume the session the agent at point is running in a herdr tab."
   (interactive)
-  (let ((scope (memex-herdr--session-at-point)))
-    (memex-herdr-resume
-     `((session_id . ,(plist-get scope :session-id))
-       (source_path . ,(plist-get scope :source-path))
-       (source . ,(plist-get scope :source))))))
+  (memex-herdr--session-at-point
+   (lambda (scope)
+     (memex-herdr-resume
+      `((session_id . ,(plist-get scope :session-id))
+        (source_path . ,(plist-get scope :source-path))
+        (source . ,(plist-get scope :source)))))))
 
 (defun memex-herdr--scope-description ()
   "Return what a search from point would be narrowed to."

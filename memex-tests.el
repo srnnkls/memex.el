@@ -214,7 +214,7 @@ is run."
     (unwind-protect
         (memex-herdr-tests--run "[]"
           (memex-herdr-tests--reporting (memex-herdr-resume record))
-          (should (null (memex-herdr-tests--of 'shell)))
+          (should (null (memex-herdr-tests--of 'sessions)))
           (should (null (memex-herdr-tests--of 'tab-create)))
           (should (null (memex-herdr-tests--of 'send-text)))
           (should (memex-herdr-tests--reported-p memex-executable))

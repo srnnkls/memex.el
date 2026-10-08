@@ -54,7 +54,7 @@
 
 (defvar memex-herdr-tests--calls nil
   "Every call the bridge made during a run, newest first.
-An entry is (ensure), (shell PROGRAM . ARGUMENTS), (tab-create . KEYS),
+An entry is (ensure), (shell PROGRAM . ARGUMENTS), (sessions . KEYS), (tab-create . KEYS),
 \(agent-start KIND NAME PANE-ID KEYS) or
 \(view SESSION-ID SOURCE-PATH DOC-ID DISPLAY).")
 
@@ -94,7 +94,7 @@ defaults to \"codex\"."
    (memex-herdr-tests--json resume-cmd)))
 
 (defun memex-herdr-tests--rows (&rest rows)
-  "Return ROWS as the JSON array `memex sessions --json-array' prints."
+  "Return ROWS as the JSON array of sessions memex answers with."
   (concat "[" (string-join rows ",") "]"))
 
 (defun memex-herdr-tests--shell (json)
@@ -133,6 +133,7 @@ A non-nil `memex-herdr-tests--unreachable' makes the readiness step signal
                                         herdr-api-agent-start)
          (((symbol-function 'call-process) (memex-herdr-tests--shell ,json))
           ((symbol-function 'process-file) (memex-herdr-tests--shell ,json))
+          ((symbol-function 'memex-api-sessions) (memex-herdr-tests--queue (list ,json)))
           ((symbol-function 'executable-find) (memex-herdr-tests--which))
           ((symbol-function 'herdr-start-server-if-needed)
                 (lambda ()
@@ -239,20 +240,18 @@ SOURCE defaults to \"codex\"."
                                      "/tmp/memex-herdr-tests/proj" nil
                                      "codex resume 7f"))
           (memex-herdr-tests--reporting (memex-herdr-resume record))
-          (let ((shells (memex-herdr-tests--of 'shell)))
-            (should (equal (length shells) 1))
-            (should (equal (cdr (car shells))
-                           (list memex-executable
-                                 "sessions" "--json-array"
-                                 "--session-id" memex-herdr-tests--session-id
-                                 "--source-path" path)))
+          (let ((lookups (memex-herdr-tests--of 'sessions)))
+            (should (equal (length lookups) 1))
+            (should (equal (cdr (car lookups))
+                           (list :session-id memex-herdr-tests--session-id
+                                 :source-path path :limit 2)))
             (should (commandp 'memex-herdr-resume))))
       (delete-file path))))
 
 (ert-deftest memex-herdr-resume-readies-herdr-then-opens-the-tab-and-sends-the-command ()
   "The ordering that carries a guarantee is `ensure' before `tab-create':
 a tab must never be created against a server that was never readied.
-`ensure' before `shell' guarantees nothing - the memex lookup has no
+`ensure' before `sessions' guarantees nothing - the memex lookup has no
 relationship to herdr - and requiring it is what would force herdr to be
 probed for on the three branches that never touch it."
   (let* ((path (memex-herdr-tests--transcript))
@@ -267,7 +266,7 @@ probed for on the three branches that never touch it."
           (let ((log (seq-remove (lambda (call) (eq (car call) 'view))
                                  (reverse memex-herdr-tests--calls))))
             (should (equal (mapcar #'car log)
-                           '(shell ensure tab-create agent-start)))
+                           '(sessions ensure tab-create agent-start)))
             (let ((keys (cdr (nth 2 log))))
               (should (equal (plist-get keys :cwd)
                              "/tmp/memex-herdr-tests/proj"))
@@ -335,11 +334,9 @@ probed for on the three branches that never touch it."
                                        template "openclaw"))
             (memex-herdr-tests--reporting
              (memex-herdr-resume (memex-herdr-tests--record path "openclaw")))
-            (should (equal (cdr (car (memex-herdr-tests--of 'shell)))
-                           (list memex-executable
-                                 "sessions" "--json-array"
-                                 "--session-id" memex-herdr-tests--session-id
-                                 "--source-path" path)))
+            (should (equal (cdr (car (memex-herdr-tests--of 'sessions)))
+                           (list :session-id memex-herdr-tests--session-id
+                                 :source-path path :limit 2)))
             (should (null (memex-herdr-tests--of 'tab-create)))
             (should (null (memex-herdr-tests--of 'agent-start)))
             (should (memex-herdr-tests--reported-p "openclaw"))
@@ -360,7 +357,7 @@ probed for on the three branches that never touch it."
                                  "/tmp/memex-herdr-tests/proj" nil
                                  "codex resume 7f"))
       (memex-herdr-tests--reporting (memex-herdr-resume record))
-      (should (null (memex-herdr-tests--of 'shell)))
+      (should (null (memex-herdr-tests--of 'sessions)))
       (should (null (memex-herdr-tests--of 'tab-create)))
       (should (null (memex-herdr-tests--of 'agent-start)))
       (should (memex-herdr-tests--reported-p path))
@@ -395,12 +392,12 @@ probed for on the three branches that never touch it."
     (should-not (fboundp 'herdr-open-tab))
     (should-not (fboundp 'herdr-api-agent-start))
     (unwind-protect
-        (cl-letf (((symbol-function 'call-process)
-                   (memex-herdr-tests--shell
-                    (memex-herdr-tests--rows
-                     (memex-herdr-tests--row memex-herdr-tests--session-id path
-                                             "/tmp/memex-herdr-tests/proj" nil
-                                             "codex resume 7f"))))
+        (cl-letf (((symbol-function 'memex-api-sessions)
+                   (memex-herdr-tests--queue
+                    (list (memex-herdr-tests--rows
+                           (memex-herdr-tests--row memex-herdr-tests--session-id path
+                                                   "/tmp/memex-herdr-tests/proj" nil
+                                                   "codex resume 7f")))))
                   ((symbol-function 'executable-find) (memex-herdr-tests--which))
                   ((symbol-function 'memex-view-session)
                    (lambda (session-id source-path &optional doc-id display)
@@ -513,16 +510,17 @@ probed for on the three branches that never touch it."
     (kind . ,kind) (value . ,value)))
 
 (defun memex-herdr-tests--queue (answers)
-  "Return a `call-process' replacement answering ANSWERS in turn.
-The last answer is repeated once the queue runs dry, so a test says only
-as many answers as it is about."
-  (lambda (program &optional _infile destination _display &rest arguments)
-    (push (cons 'shell (cons program arguments)) memex-herdr-tests--calls)
-    (let ((json (if (cdr answers) (pop answers) (car answers)))
-          (target (if (consp destination) (car destination) destination)))
-      (with-current-buffer (if (bufferp target) target (current-buffer))
-        (insert json)))
-    0))
+  "Return a `memex-api-sessions' replacement answering ANSWERS in turn.
+Each answer is JSON, handed back decoded and at once.  The last answer is
+repeated once the queue runs dry, so a test says only as many answers as
+it is about."
+  (lambda (callback &rest keys)
+    (push (cons 'sessions (cl-loop for (key value) on keys by #'cddr
+                                    unless (eq key :errback)
+                                    append (list key value)))
+          memex-herdr-tests--calls)
+    (funcall callback (memex--decode (if (cdr answers) (pop answers) (car answers))))
+    nil))
 
 (defmacro memex-herdr-tests--attached (agent answers &rest body)
   "Run BODY in a buffer herdr attached, with AGENT live and ANSWERS queued."
@@ -531,7 +529,7 @@ as many answers as it is about."
          (memex-herdr-tests--messages nil)
          (buffer (generate-new-buffer "*memex herdr tests terminal*")))
      (unwind-protect
-         (cl-letf (((symbol-function 'call-process)
+         (cl-letf (((symbol-function 'memex-api-sessions)
                     (memex-herdr-tests--queue ,answers))
                    ((symbol-function 'executable-find)
                     (memex-herdr-tests--which))
@@ -594,16 +592,6 @@ as many answers as it is about."
           (should (get-buffer-window viewer)))
       (kill-buffer viewer))))
 
-(ert-deftest memex-herdr-keeps-the-shell-outs-diagnostics-out-of-its-json ()
-  (let (destination)
-    (cl-letf (((symbol-function 'call-process)
-               (lambda (_program &optional _infile target &rest _)
-                 (setq destination target)
-                 (insert "[]")
-                 0)))
-      (memex-herdr--sessions)
-      (should (equal destination '(t nil))))))
-
 (ert-deftest memex-herdr-open-agent-session-follows-the-session-to-its-newest-branch ()
   "herdr keeps reporting a session after the agent branches it."
   (memex-herdr-tests--attached
@@ -646,14 +634,11 @@ as many answers as it is about."
                                      "/tmp/memex-herdr-tests/a.jsonl"
                                      memex-herdr-tests--agent-cwd nil nil)))
     (memex-herdr-open-agent-session)
-    (let ((shells (memex-herdr-tests--of 'shell))
+    (let ((lookups (memex-herdr-tests--of 'sessions))
           (view (car (memex-herdr-tests--of 'view))))
-      (should (equal (mapcar #'cdr shells)
-                     (list (list memex-executable "sessions" "--json-array"
-                                 "--session-id" memex-herdr-tests--session-id)
-                           (list memex-executable "sessions" "--json-array"
-                                 "--cwd" memex-herdr-tests--agent-cwd
-                                 "--limit" "50"))))
+      (should (equal (mapcar #'cdr lookups)
+                     (list (list :session-id memex-herdr-tests--session-id :limit 2)
+                           (list :cwd memex-herdr-tests--agent-cwd :limit 50))))
       (should (equal (seq-take (cdr view) 2)
                      (list memex-herdr-tests--session-id
                            "/tmp/memex-herdr-tests/a.jsonl")))
@@ -722,7 +707,7 @@ as many answers as it is about."
       (memex-herdr-tests--agent nil)
       (list (memex-herdr-tests--rows))
     (memex-herdr-tests--reporting (memex-herdr-open-agent-session))
-    (should (null (memex-herdr-tests--of 'shell)))
+    (should (null (memex-herdr-tests--of 'sessions)))
     (should (null (memex-herdr-tests--of 'view)))
     (should (memex-herdr-tests--reported-p "review"))))
 
@@ -733,7 +718,7 @@ as many answers as it is about."
       (list (memex-herdr-tests--rows))
     (kill-local-variable 'herdr-terminal-id)
     (memex-herdr-tests--reporting (memex-herdr-open-agent-session))
-    (should (null (memex-herdr-tests--of 'shell)))
+    (should (null (memex-herdr-tests--of 'sessions)))
     (should (null (memex-herdr-tests--of 'view)))
     (should (memex-herdr-tests--reported-p "memex herdr tests terminal"))))
 
