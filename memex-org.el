@@ -108,9 +108,9 @@ it when it is not."
              (plist-get record :source-path)
              (plist-get record :doc-id))))
 
-;;;###autoload
-(with-eval-after-load 'org
-  (org-link-set-parameters "memex" :follow #'memex-org-follow))
+;;;###autoload (with-eval-after-load 'org (org-link-set-parameters "memex" :follow #'memex-org-follow))
+
+(org-link-set-parameters "memex" :follow #'memex-org-follow)
 
 (defun memex-org--excerpt (record)
   "Return RECORD as Org text quoted under a link back to it.

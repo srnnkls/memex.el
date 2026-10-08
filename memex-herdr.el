@@ -41,11 +41,11 @@
 (require 'transient)
 (require 'eieio)
 
-(declare-function herdr-start-server-if-needed "herdr-core" ())
-(declare-function herdr-open-tab "herdr" (&rest keys))
+(declare-function herdr-start-server-if-needed "ext:herdr-core" ())
+(declare-function herdr-open-tab "ext:herdr" (&rest keys))
 (declare-function memex-anchor--herdr-p "memex-anchor" ())
 (declare-function memex-anchor-resume "memex-anchor" (record resume))
-(declare-function herdr-api-agent-start "herdr-api"
+(declare-function herdr-api-agent-start "ext:herdr-api"
                   (kind name pane-id &rest keys))
 (declare-function +ws-pin-of "ext:+workspace-pins" (buffer))
 (declare-function +ws-pin-buffer "ext:+workspace-pins"

@@ -20,6 +20,13 @@
 (depends-on "magit-section" "4.0.0")
 (depends-on "transient" "0.9.0")
 
+;; The aggregate suite exercises the fallback where Consult cannot be loaded.
+;; Installing it in that test environment changes five tests to the live path.
+(development
+ (depends-on "embark")
+ (depends-on "evil")
+ (depends-on "marginalia"))
+
 (load-paths ".")
 
 (files "memex*.el" "LICENSE"
