@@ -84,7 +84,7 @@ Each element is (KEY-DESCRIPTION KEYMAP . DEFINITION)."
 
 (defun memex-evil-tests--evil-or-skip ()
   "Require the evil installed on this machine, or skip the calling test."
-  (unless (featurep 'evil)
+  (unless (locate-library "evil")
     (let ((build (car (file-expand-wildcards
                        (expand-file-name
                         "~/.config/emacs/.local/straight/build-*/evil")))))

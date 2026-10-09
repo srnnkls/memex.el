@@ -155,7 +155,7 @@ subprocess."
 
 (defun memex-embark-tests--embark-or-skip ()
   "Require the embark installed on this machine, or skip the calling test."
-  (unless (featurep 'embark)
+  (unless (locate-library "embark")
     (dolist (name '("compat" "embark"))
       (let ((build (car (file-expand-wildcards
                          (expand-file-name

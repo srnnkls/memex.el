@@ -33,8 +33,8 @@
        '(:exclude "memex*-tests.el"))
 
 (defconst memex-test-file-spec
-  '("memex*-tests.el")
-  "File spec for ERT suites excluded from the package files.")
+  '("memex-tests.el")
+  "File spec for the aggregate ERT suite, which loads every other suite.")
 
 (script "test"
         (let* ((default-directory (file-name-directory load-file-name))
