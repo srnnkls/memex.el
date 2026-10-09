@@ -51,7 +51,7 @@ https://github.com/srnnkls/memex.el. On Doom Emacs, add both to `packages.el`:
 Each integration is a file of its own and loads only where its partner does:
 
 ```elisp
-(use-package memex-anchor :after memex-view)  ; `a' in a transcript opens the live agent
+(use-package memex-anchor :after memex-view)  ; `a' or `C-c C-a' in a transcript opens the live agent
 (use-package memex-herdr :after herdr)        ; resume in herdr, keys in herdr's dashboard
 (use-package memex-org :after org)            ; `memex:' links and capture
 (use-package memex-embark :after embark)      ; actions on memex candidates

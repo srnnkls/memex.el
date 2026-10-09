@@ -362,8 +362,9 @@ located there; the indexed viewer remains the complete history."
 
 ;;;###autoload
 (defun memex-anchor-setup ()
-  "Bind the anchor onto the viewer's map."
-  (keymap-set memex-session-mode-map "a" #'memex-anchor-show))
+  "Bind the anchor onto the viewer's map, on `a' and on \`C-c C-a'."
+  (keymap-set memex-session-mode-map "a" #'memex-anchor-show)
+  (keymap-set memex-session-mode-map "C-c C-a" #'memex-anchor-show))
 
 (with-eval-after-load 'memex-view (memex-anchor-setup))
 ;;;###autoload (with-eval-after-load 'memex-view (memex-anchor-setup))

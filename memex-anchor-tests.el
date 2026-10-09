@@ -141,10 +141,13 @@ the session's own directory is the answer then; two is not."
 (ert-deftest memex-anchor-binds-itself-onto-the-viewer ()
   "Reading a record and jumping to the agent still running it is one
 motion, so the verb belongs on the viewer's own map.  Not on `j': evil
-normal state spends that on `next-line'."
+normal state spends that on `next-line'.  \`C-c C-a' reaches it from
+every evil state."
   (require 'memex-view)
   (memex-anchor-setup)
-  (should (eq (keymap-lookup memex-session-mode-map "a") #'memex-anchor-show)))
+  (should (eq (keymap-lookup memex-session-mode-map "a") #'memex-anchor-show))
+  (should (eq (keymap-lookup memex-session-mode-map "C-c C-a")
+              #'memex-anchor-show)))
 
 (ert-deftest memex-anchor-goto-puts-point-where-the-terminal-drew-the-record ()
   "The live terminal's scrollback is its buffer's own text, so a record
