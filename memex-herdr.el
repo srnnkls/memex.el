@@ -52,10 +52,10 @@
                   (buffer &optional workspace))
 (declare-function +ws-pin-follow "ext:+workspace-pins" (buffer))
 (declare-function transient-append-suffix "transient" (prefix loc suffix &optional keep-other))
-(declare-function herdr-read-agent "herdr" (prompt &optional entries))
-(declare-function herdr--prune-session-targets "herdr" (entries))
-(declare-function herdr-agent--send-candidates "herdr-agent" ())
-(declare-function herdr-agent--workspace-entries "herdr-agent" (entries))
+(declare-function herdr-read-agent "ext:herdr" (prompt &optional entries))
+(declare-function herdr--prune-session-targets "ext:herdr" (entries))
+(declare-function herdr-agent--send-candidates "ext:herdr-agent" ())
+(declare-function herdr-agent--workspace-entries "ext:herdr-agent" (entries))
 (declare-function transient-get-suffix "transient" (prefix loc))
 
 (defconst memex-herdr--branch-window 50
@@ -218,10 +218,10 @@ Missing transcripts or resume commands open the indexed session."
 
 ;;;; Reading the session an attached agent is running
 
-(declare-function herdr-agent-buffer-target "herdr-agent" (buffer))
+(declare-function herdr-agent-buffer-target "ext:herdr-agent" (buffer))
 
 (defun memex-herdr--attached-agent (buffer)
-  "Return the herdr agent whose terminal BUFFER shows, or nil.
+  "Return the herdr agent whose terminal is drawn in BUFFER, or nil.
 The agent is looked for on every herdr server Emacs talks to, matched by
 the server and terminal herdr stamped on BUFFER when it attached it."
   (when-let* (((buffer-live-p buffer))
@@ -532,7 +532,7 @@ has had its say does not undo it."
 
 ;;;###autoload
 (defun memex-herdr-install-dashboard ()
-  "Offer memex's searches from herdr's dashboard, where herdr is installed.
+  "Offer memex's search commands from herdr's dashboard, where herdr is installed.
 The dashboard knows nothing of memex; what it offers is a keymap and a
 transient, and this is memex taking both up."
   (memex-herdr-install-keys)

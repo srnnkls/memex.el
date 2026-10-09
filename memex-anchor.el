@@ -24,11 +24,11 @@
 (declare-function memex-herdr--directory "memex-herdr" (row))
 (declare-function memex-herdr--start "memex-herdr" (row command &optional name))
 
-(declare-function herdr-agents "herdr" ())
-(declare-function herdr-attach-entry "herdr" (entry))
-(declare-function herdr-terminal-buffer "herdr" (terminal-id))
-(declare-function herdr-session-for "herdr" (&optional directory))
-(declare-function herdr-attach-ready-p "herdr" (&optional buffer))
+(declare-function herdr-agents "ext:herdr" ())
+(declare-function herdr-attach-entry "ext:herdr" (entry))
+(declare-function herdr-terminal-buffer "ext:herdr" (terminal-id))
+(declare-function herdr-session-for "ext:herdr" (&optional directory))
+(declare-function herdr-attach-ready-p "ext:herdr" (&optional buffer))
 (defvar herdr-attach-ready-hook)
 (defvar herdr-attach-takeover)
 
@@ -362,11 +362,11 @@ located there; the indexed viewer remains the complete history."
 
 ;;;###autoload
 (defun memex-anchor-setup ()
-  "Bind the anchor onto the viewer's map, on `a' and on \`C-c C-a'."
+  "Bind `memex-anchor-show' in the viewer's map."
   (keymap-set memex-session-mode-map "a" #'memex-anchor-show)
   (keymap-set memex-session-mode-map "C-c C-a" #'memex-anchor-show))
 
-(with-eval-after-load 'memex-view (memex-anchor-setup))
+(memex-anchor-setup)
 ;;;###autoload (with-eval-after-load 'memex-view (memex-anchor-setup))
 
 (provide 'memex-anchor)

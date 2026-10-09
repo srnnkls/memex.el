@@ -57,7 +57,7 @@ eat them."
   :group 'memex)
 
 (defconst memex-view--controls
-  (rx (any "\0-\10" "\13" "\14" "\16-\37" "\177"))
+  (rx (in "\0-\10" "\13" "\14" "\16-\37" "\177"))
   "The control characters a transcript shows as literal escapes.
 Newline and tab are not among them: both carry the shape of the text.")
 
@@ -554,7 +554,7 @@ took and what it is called trail behind marked as detail, which
          (memex-view--detail (concat "  " detail)))))))
 
 (defconst memex-view--dirty
-  (rx (any "\0-\10" "\13" "\14" "\16-\37" "\r" "\177"))
+  (rx (in "\0-\10" "\13" "\14" "\16-\37" "\r" "\177"))
   "Any character that would make `memex-view--clean' change the text.
 Most fields hold none, and answering that in one scan is cheaper than
 the three passes cleaning would otherwise cost each of them.")
@@ -1336,7 +1336,7 @@ when it showed something other than a transcript before."
            (kill-buffer buffer)))))
 
 (defun memex-view--refresh-shown (window)
-  "Refresh the transcript WINDOW shows once it is the selected window.
+  "Refresh the transcript in WINDOW once it is the selected window.
 A refresh still out is left to finish rather than started over."
   (when (and (eq window (selected-window))
              (eq (buffer-local-value 'major-mode (window-buffer window))
@@ -1455,7 +1455,7 @@ buffer the user is in and erase it."
   memex-view--pending)
 
 (defun memex-view--last-visible-section ()
-  "Return the section of the last record this buffer shows, or nil."
+  "Return the section of the last record drawn in this buffer, or nil."
   (and magit-root-section
        (seq-find (lambda (section)
                    (not (eq (memex-view--state
@@ -1464,7 +1464,7 @@ buffer the user is in and erase it."
                  (reverse (oref magit-root-section children)))))
 
 (defun memex-view--last-message-section ()
-  "Return the section of the last message this buffer shows, or nil.
+  "Return the section of the last message drawn in this buffer, or nil.
 A message is what a person or the agent said; tool traffic after it is
 not one.  A buffer showing no message answers with its last record."
   (let ((shown (and magit-root-section
@@ -1764,7 +1764,7 @@ stood, each found again by the record it was on."
             (set-window-point window (memex-view--anchor-position point))))))))
 
 (defun memex-view-refresh (&optional buffer)
-  "Bring BUFFER's transcript up to what its session holds now, in place.
+  "Bring BUFFER's transcript up to date with its session, in place.
 BUFFER is the current buffer unless given.  Memex scans its sources
 first, since its index holds only what it last read, and the session is
 then fetched again and drawn over the buffer.  The filters and details

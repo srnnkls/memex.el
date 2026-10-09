@@ -123,7 +123,7 @@ subsets."
   (or (alist-get 'started_at session) ""))
 
 (defun memex-status--key-messages (session)
-  "Return how many messages SESSION holds as a sortable string."
+  "Return SESSION's message count as a sortable string."
   (format "%012d" (or (alist-get 'message_count session) 0)))
 
 (defun memex-status--key-project (session)
@@ -230,7 +230,7 @@ Nil leaves the rows in the order memex answered with.")
                         'font-lock-face 'memex-status-meta))))
 
 (defun memex-status--size-column (session)
-  "Return how many messages SESSION holds, right-aligned."
+  "Return SESSION's message count, right-aligned."
   (propertize (format "%6s" (or (alist-get 'message_count session) "?"))
               'font-lock-face 'memex-status-meta))
 

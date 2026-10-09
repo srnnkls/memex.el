@@ -439,7 +439,7 @@ written: what the row itself has no column for."
     (funcall memex-search-highlight-function window query)))
 
 (defun memex-search--highlight-opened (buffer)
-  "Mark a transcript a search opened with the query it was found by."
+  "Mark the transcript in BUFFER a search opened with the query that found it."
   (let ((key (cons (buffer-local-value 'memex-view-session-id buffer)
                    (buffer-local-value 'memex-view-source-path buffer))))
     (when-let* ((query (alist-get key memex-search--opened-queries
@@ -682,7 +682,7 @@ nil for the running search's own."
                       memex-search-record-roles))))
 
 (defun memex-search--pending-role-description (role)
-  "Return ROLE as the roles menu shows it, lit while the pending set holds it."
+  "Return ROLE for the roles menu, lit while it is among the pending roles."
   (propertize role 'face (if (member role memex-search--pending-roles)
                              'transient-value
                            'transient-inactive-value)))

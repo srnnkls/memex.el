@@ -2,7 +2,7 @@
 
 (package "memex"
          "0.1.0"
-         "Read the sessions your agents leave behind")
+         "Search indexed agent conversation history")
 
 (website-url "https://github.com/srnnkls/memex.el")
 (license "GPL-3.0-or-later")
