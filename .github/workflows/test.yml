@@ -32,8 +32,10 @@ jobs:
         with:
           version: 'snapshot'
 
+      # Eask counts a built-in package as installed whatever its version, so
+      # the transient Emacs 29 and 30 ship would stand in for the one declared.
       - name: Install dependencies
-        run: eask install-deps --dev
+        run: eask install-deps --dev --force
 
       - name: Compile
         run: eask compile
@@ -55,8 +57,10 @@ jobs:
         with:
           version: 'snapshot'
 
+      # Eask counts a built-in package as installed whatever its version, so
+      # the transient Emacs 29 and 30 ship would stand in for the one declared.
       - name: Install dependencies
-        run: eask install-deps --dev
+        run: eask install-deps --dev --force
 
       - name: Checkdoc
         run: eask lint checkdoc --strict
@@ -65,11 +69,11 @@ jobs:
         run: |
           eask lint package --strict \
             $(ls memex*.el | grep -v -- '-tests\.el' \
-                           | grep -vE 'memex-(embark|evil)\.el')
+                           | grep -vE 'memex-(embark|evil|herdr)\.el')
 
       # Unsilenceable `with-eval-after-load' warning: purcell/package-lint#125.
       - name: Package metadata (soft-dependency integrations)
-        run: eask lint package memex-embark.el memex-evil.el
+        run: eask lint package memex-embark.el memex-evil.el memex-herdr.el
 
       - name: Declarations
         run: eask lint declare --strict
