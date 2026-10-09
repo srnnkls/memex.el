@@ -288,8 +288,10 @@ error object unchanged."
                 (funcall start
                          (lambda (data) (setq outcome (cons 'ok data)))
                          (lambda (failure) (setq outcome (cons 'failed failure)))))
+          ;; Waiting on an exited process returns before its sentinel runs.
           (while (and (null outcome) (< (float-time) deadline))
-            (accept-process-output process 0.05)))
+            (accept-process-output (and (process-live-p process) process)
+                                   0.05)))
       (memex-cancel-rpc process))
     (cond ((eq (car outcome) 'ok) (cdr outcome))
           ((eq (car outcome) 'failed) (signal (cadr outcome) (cddr outcome)))
