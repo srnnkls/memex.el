@@ -106,6 +106,8 @@ an object with a score field.")
 
 (defun memex-tests--stub (body)
   "Write BODY as a stub memex executable and return its path."
+  (when (eq system-type 'windows-nt)
+    (ert-skip "stub executables are POSIX shell scripts"))
   (unless memex-tests--dir
     (setq memex-tests--dir (make-temp-file "memex-tests" t)))
   (let ((path (expand-file-name "memex-stub" memex-tests--dir)))

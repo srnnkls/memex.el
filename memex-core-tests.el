@@ -37,6 +37,8 @@
 
 (defun memex-core-tests--stub-named (name body)
   "Write BODY as a stub memex executable called NAME and return its path."
+  (when (eq system-type 'windows-nt)
+    (ert-skip "stub executables are POSIX shell scripts"))
   (let ((path (expand-file-name name (memex-core-tests--tempdir))))
     (with-temp-file path (insert "#!/bin/sh\n" body))
     (set-file-modes path #o755)

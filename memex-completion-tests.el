@@ -57,6 +57,8 @@ and that has to end in a failure rather than a hang.")
 
 (defun memex-completion-tests--stub (body)
   "Write BODY as a stub memex executable and return its path."
+  (when (eq system-type 'windows-nt)
+    (ert-skip "stub executables are POSIX shell scripts"))
   (let ((path (expand-file-name "memex-stub" (memex-completion-tests--tempdir))))
     (with-temp-file path (insert "#!/bin/sh\n" body))
     (set-file-modes path #o755)
